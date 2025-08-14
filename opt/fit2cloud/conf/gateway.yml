@@ -1,0 +1,5 @@
+zuul:
+  routes:
+    fit2cloud:
+      path: /fit2cloud/**
+      url: https://fit2cloud.com

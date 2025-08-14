@@ -1,0 +1,20 @@
+services:
+  redis:
+    image: ${IMAGE_ADDRESS}/redis:5.0.3-alpine
+    container_name: redis
+    restart: always
+    command: ["/etc/redis.conf"]
+    volumes:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/redis.conf:/etc/redis.conf
+      - host-opt-fit2cloud-redis-data:/data
+    mem_limit: 2048m
+    networks:
+      - cmp-network
+volumes:
+  host-opt-fit2cloud-redis-data:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/redis
+      o: bind
+networks:
+  cmp-network: 

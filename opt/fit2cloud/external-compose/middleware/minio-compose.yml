@@ -1,0 +1,26 @@
+services:
+  minio:
+    image: ${IMAGE_ADDRESS}/minio:latest
+    container_name: minio
+    ports:
+      - "0.0.0.0:9000:9000"
+      - "0.0.0.0:9001:9001"
+    restart: always
+    volumes:
+      - host-opt-fit2cloud-minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      retries: 3
+      start_period: 30s
+      timeout: 10s
+    env_file:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/minio/minio.env
+
+volumes:
+  host-opt-fit2cloud-minio-data:
+    driver_opts:
+      type: none
+      device: minio_folder
+      o: bind

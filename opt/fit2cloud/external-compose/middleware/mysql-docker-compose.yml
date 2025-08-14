@@ -1,0 +1,28 @@
+services:
+  mysql:
+    image: ${IMAGE_ADDRESS}/mysql:8.1.0
+    container_name: mysql
+    restart: always
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 180s
+    env_file:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/mysql/mysql.env
+    volumes:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/my.cnf:/etc/my.cnf
+      - ${CE_INSTALL_PATH}/fit2cloud/bin/mysql:/docker-entrypoint-initdb.d/
+      - host-opt-fit2cloud-mysql-data:/var/lib/mysql
+    mem_limit: 2048m
+    networks:
+      - cmp-network
+volumes:
+  host-opt-fit2cloud-mysql-data:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/mysql
+      o: bind
+networks:
+  cmp-network: 

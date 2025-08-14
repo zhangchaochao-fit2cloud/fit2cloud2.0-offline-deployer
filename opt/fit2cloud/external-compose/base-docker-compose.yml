@@ -1,0 +1,249 @@
+services:
+  management-center:
+    image: ${IMAGE_ADDRESS}/management-center:${VERSION}
+    container_name: management-center
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    mem_limit: 2048m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  gateway:
+    image: ${IMAGE_ADDRESS}/gateway:${VERSION}
+    container_name: gateway
+    restart: always
+    ports:
+      - "0.0.0.0:${CE_ACCESS_PORT:-80}:6601"
+    volumes:
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    depends_on:
+      management-center:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    mem_limit: 2048m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  dashboard:
+    image: ${IMAGE_ADDRESS}/dashboard:${VERSION}
+    container_name: dashboard
+    restart: always
+    volumes:
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 1024m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  vm-service:
+    image: ${IMAGE_ADDRESS}/vm-service:${VERSION}
+    container_name: vm-service
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+      - ${CE_INSTALL_PATH}/fit2cloud/middleware_init:/opt/fit2cloud/middleware_init
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 2048m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  operation-analytics:
+    image: ${IMAGE_ADDRESS}/operation-analytics:${VERSION}
+    container_name: operation-analytics
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 2048m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  screen-display:
+    image: ${IMAGE_ADDRESS}/screen-display:${VERSION}
+    container_name: screen-display
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 1024m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  billing-center:
+    image: ${IMAGE_ADDRESS}/billing-center:${VERSION}
+    container_name: billing-center
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 2048m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  orchestrator-service:
+    image: ${IMAGE_ADDRESS}/orche:${VERSION}
+    container_name: orchestrator-service
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+      - host-opt-fit2cloud-sftp-upload:/opt/fit2cloud/sftp/sftpuser/upload
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 2048m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  cloud-worker:
+    image: ${IMAGE_ADDRESS}/cloud-worker:${VERSION}
+    container_name: cloud-worker
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 1024m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  message-worker:
+    image: ${IMAGE_ADDRESS}/message-worker:${VERSION}
+    container_name: message-worker
+    restart: always
+    volumes:
+      - share-volume:/opt/fit2cloud/share/plugins
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    depends_on:
+      management-center:
+        condition: service_healthy
+    mem_limit: 1024m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    networks:
+      - cmp-network
+
+  keycloak:
+    image: ${IMAGE_ADDRESS}/keycloak:${VERSION}
+    container_name: keycloak
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    env_file:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/keycloak/keycloak.properties
+    ports:
+      - "0.0.0.0:8080:8080"
+      - "0.0.0.0:7600:7600"
+    command:
+      - -b 0.0.0.0 -Dkeycloak.import=/opt/fit2cloud/conf/cmp-realm.json
+    volumes:
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    mem_limit: 4096m
+    networks:
+      - cmp-network
+
+  ansible:
+    image: ${IMAGE_ADDRESS}/ansible-api:${VERSION}
+    container_name: ansible
+    restart: always
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 360s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    env_file:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/redis/redis.env
+    mem_limit: 2048m
+    volumes:
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+      - host-opt-fit2cloud-git:/opt/fit2cloud/git
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+    networks:
+      - cmp-network

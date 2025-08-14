@@ -1,0 +1,35 @@
+services:
+  influxdb:
+    image: ${IMAGE_ADDRESS}/influxdb:1.8.0-latest
+    container_name: "influxdb"
+    environment:
+      - INFLUXDB_REPORTING_DISABLED=true
+      - INFLUXDB_HTTP_FLUX_ENABLED=false
+      - INFLUXDB_HTTP_LOG_ENABLED=false
+      - INFLUXDB_HTTP_ACCESS_LOG_PATH=/var/lib/influxdb/influxdb_http.log
+      - INFLUXDB_RETENTION_ENABLED=true
+      - INFLUXDB_RETENTION_CHECK_INTERVAL=8h
+      - INFLUXDB_DB=fit2cloud
+    volumes:
+      - host-opt-fit2cloud-influxdb-data:/var/lib/influxdb
+      - ${CE_INSTALL_PATH}/fit2cloud/bin/influxdb/:/docker-entrypoint-initdb.d/
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/influxdb.conf:/etc/influxdb/influxdb.conf
+    mem_limit: 1024m
+    healthcheck:
+      test: ["CMD", "curl", "-i", "http://localhost:8086"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "8086:8086"
+    restart: always
+    networks:
+      - cmp-network
+volumes:
+  host-opt-fit2cloud-influxdb-data:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/influxdb
+      o: bind
+networks:
+  cmp-network: 

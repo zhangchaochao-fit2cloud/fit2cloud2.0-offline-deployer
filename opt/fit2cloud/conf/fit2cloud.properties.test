@@ -1,0 +1,111 @@
+#CMP DB configs
+rdb.driver=com.mysql.cj.jdbc.Driver
+rdb.url=jdbc:mysql://mysql:3306/fit2cloud?autoReconnect=false&useUnicode=true&characterEncoding=UTF-8&characterSetResults=UTF-8&zeroDateTimeBehavior=CONVERT_TO_NULL&useSSL=false&nullCatalogMeansCurrent=true
+rdb.user=root
+rdb.password=U2FsdGVkX18JHB5ZNHZLFcHJT0XU7AxiNxC1FcV4tu+D8Bp2EswsCAqEMV4p58Lc
+
+#KeyCloak Optional DB configs
+optional.rdb.driver=com.mysql.cj.jdbc.Driver
+optional.rdb.url=jdbc:mysql://mysql:3306/keycloak?autoReconnect=false&useUnicode=true&characterEncoding=UTF-8&characterSetResults=UTF-8&zeroDateTimeBehavior=CONVERT_TO_NULL&useSSL=false
+optional.rdb.user=root
+optional.rdb.password=U2FsdGVkX1+sRw3sIGDDMZdi+ZGbbEwipLiqmPhJOMAXD1oWLYwB2J+bZJTUBWVZ
+
+#Activiti
+spring.datasource.url=jdbc:mysql://mysql:3306/activiti?autoReconnect=false&useUnicode=true&characterEncoding=UTF-8&characterSetResults=UTF-8&zeroDateTimeBehavior=CONVERT_TO_NULL&useSSL=false
+spring.datasource.username=root
+spring.datasource.password=U2FsdGVkX190n01l5Ko1gDFvGSglhNu0k8bwDRlyWVT/fLJ7xN9Jqo8TZkFOPPc0
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+spring.activiti.check-process-definitions=false
+spring.activiti.history-level=full
+
+#Redis
+redis.hostname=redis
+redis.password=U2FsdGVkX18FExvjGK16G7Bu9tnwwjtgsx/BlVMPww/YjouBKeBkhSFzuADH3Vyd
+redis.port=6379
+redis.database=0
+
+#InfluxDB
+spring.influx.url=http://influxdb:8086
+spring.influx.password=U2FsdGVkX18Au7ObDKEQdG05o3VEvYDPFrCsI1ZEsCB/dN4T8J8Bc3qdr61z8bhO
+spring.influx.user=fit2cloud
+spring.influx.database=fit2cloud
+spring.influx.log.database=log_fit2cloud
+
+#KeyCloak
+keycloak-server-address=http://keycloak:8080/auth
+keycloak.auth-server-url=/auth/
+keycloak.realm=cmp
+keycloak.public-client=true
+keycloak.resource=cmp-client
+
+# RabbitMQ
+spring.rabbitmq.host=rabbitmq
+spring.rabbitmq.port=5672
+spring.rabbitmq.username=fit2cloud
+spring.rabbitmq.password=U2FsdGVkX19BmEFPkpUJa4knZvJtTdIbcw/JbPnhOts41JQBYxeP7JghLL9CI2nu
+spring.amqp.deserialization-trust-all=true
+spring.rabbitmq.listener.simple.retry.enabled=true
+spring.rabbitmq.listener.simple.retry.max-attempts=5
+spring.rabbitmq.listener.simple.retry.initial-interval=5000ms
+spring.rabbitmq.listener.simple.retry.max-interval=120000ms
+spring.rabbitmq.listener.simple.retry.multiplier=2
+
+#Ansible
+ansible.host=http://ansible:8000
+ansible.version=v1
+ansible.username=root
+ansible.password=U2FsdGVkX18lR+gfF3z0nHeV7F7yKwWDBep3f1CvlA0=
+#Management node download path
+ansible.temp.path=/tmp/apps/
+#Target node download path
+ansible.temp.target.path=/tmp/apps/
+ansible.database.type=mysql
+ansible.database.host=mysql
+ansible.database.port=3306
+ansible.database.user=root
+ansible.database.password=U2FsdGVkX18JHB5ZNHZLFcHJT0XU7AxiNxC1FcV4tu+D8Bp2EswsCAqEMV4p58Lc
+
+ansible.redis.host=redis
+ansible.redis.password=U2FsdGVkX18FExvjGK16G7Bu9tnwwjtgsx/BlVMPww/YjouBKeBkhSFzuADH3Vyd
+ansible.redis.port=6379
+
+#Log
+#DEBUG, INFO, WARN, ERROR
+logger.level=INFO
+#Retention days
+fit2cloud.log.max.history=30
+#Maximum log file capacity limit, in GB
+fit2cloud.log.total.size.cap=2
+#The maximum size allowed for each log file, in MB
+fit2cloud.log.max.file.size=50
+
+#eureka
+eureka.client.service-url.defaultZone=http://management-center:6602/eureka/
+
+#Encryption
+security.password=true
+
+#DevOps
+devops.worker.address=http://devops-worker:5919/
+orchestrateWorkExecute=http://orchestrator-service:6001/orchestrator/
+
+#chronograf
+chronograf.url=http://chronograf:8211
+
+#Upload
+file.upload.path=/opt/fit2cloud/sftp/sftpuser/upload
+upload.file.postfix=tar.gz,tar.bz2
+
+maven.setting.path=/usr/lib/mvn/conf/settings.xml
+
+# minio config
+
+
+# actuator disable all endpoints, enable only health and info
+management.endpoints.enabled-by-default=false
+management.endpoint.health.enabled=true
+management.endpoint.info.enabled=true
+
+
+# Synchronize cloud accounts every two hours
+sync.cloud.account=0 0 0/2 * * ?

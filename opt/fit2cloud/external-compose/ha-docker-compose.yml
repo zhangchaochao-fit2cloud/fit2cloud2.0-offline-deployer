@@ -1,0 +1,103 @@
+name: fit2cloud
+services:
+
+  management-center:
+    extends:
+      file: ./base-docker-compose.yml
+      service: management-center
+    ports:
+      - "0.0.0.0:6602:6602"
+
+  gateway:
+    extends:
+      file: ./base-docker-compose.yml
+      service: gateway
+
+  dashboard:
+    extends:
+      file: ./base-docker-compose.yml
+      service: dashboard
+    ports:
+      - "0.0.0.0:6608:6608"
+
+  vm-service:
+    extends:
+      file: ./base-docker-compose.yml
+      service: vm-service
+    ports:
+      - "0.0.0.0:6610:6610"
+
+  operation-analytics:
+    extends:
+      file: ./base-docker-compose.yml
+      service: operation-analytics
+    ports:
+      - "0.0.0.0:6605:6605"
+
+  screen-display:
+    extends:
+      file: ./base-docker-compose.yml
+      service: screen-display
+    ports:
+      - "0.0.0.0:6604:6604"
+
+  billing-center:
+    extends:
+      file: ./base-docker-compose.yml
+      service: billing-center
+    ports:
+      - "0.0.0.0:6603:6603"
+
+  orchestrator-service:
+    extends:
+      file: ./base-docker-compose.yml
+      service: orchestrator-service
+    ports:
+      - "0.0.0.0:6001:6001"
+
+  cloud-worker:
+    extends:
+      file: ./base-docker-compose.yml
+      service: cloud-worker
+    ports:
+      - "0.0.0.0:5920:5920"
+
+  keycloak:
+    extends:
+      file: ./base-docker-compose.yml
+      service: keycloak
+
+volumes:
+  host-opt-fit2cloud-conf:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/conf
+      o: bind
+  host-opt-fit2cloud-logs:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/logs
+      o: bind
+  host-opt-fit2cloud-git:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/git
+      o: bind
+  host-opt-fit2cloud-sftp-upload:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/sftp/sftpuser/upload
+      o: bind
+  host-opt-fit2cloud-upload:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/upload
+      o: bind
+  share-volume:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/plugins
+      o: bind
+
+networks:
+  cmp-network:

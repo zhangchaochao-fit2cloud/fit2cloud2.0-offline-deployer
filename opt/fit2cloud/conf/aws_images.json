@@ -1,0 +1,134 @@
+{
+    "cn-north-1": [
+        {
+            "id": "ami-0e73c8a64c3afcefa",
+            "description": "amzn2-ami-hvm-2.0.20201111.0-x86_64-gp2"
+        },
+        {
+            "id": "ami-07a3f215cc90c889c",
+            "description": "amzn-ami-hvm-2018.03.0.20200918.0-x86_64-gp2"
+        },
+        {
+            "id": "ami-0911a011b3d871164",
+            "description": "CentOS Linux 7 x86_64 HVM EBS ENA 1901_01-078dc9bd-ff68-475c-a300-c-078dc9bd-ff68-475c-a300-c73597460a0c-ami-00034f98567a71889.4"
+        },
+        {
+            "id": "ami-094829acfd7746084",
+            "description": "CentOS-6.9-Nitro-8281452b-5861-4b00-9cc8-e2e10de74fec-ami-04605f6ef-8281452b-5861-4b00-9cc8-e2e10de74fec-ami-00fe4b224bd5865e7.4"
+        },
+        {
+            "id": "ami-04ce378baa6f3f21e",
+            "description": "RHEL-8.2.0_HVM-20200423-x86_64-0-Hourly2-GP2"
+        },
+        {
+            "id": "ami-0a20c35e0f954e70b",
+            "description": "RHEL-7.9_HVM_BETA-20200422-x86_64-0-Hourly2-GP2"
+        },
+        {
+            "id": "ami-0592ccadb56e65f8d",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-20201112.1"
+        },
+        {
+            "id": "ami-0aa3f0ec9bb12138d",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-bionic-18.04-amd64-server-20200908"
+        },
+        {
+            "id": "ami-0a76deb13b92d1e3f",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server-20200610"
+        },
+        {
+            "id": "ami-0dde117d607ab79cd",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-trusty-14.04-amd64-server-20190514"
+        },
+        {
+            "id": "ami-05a5a50a14fc89429",
+            "description": "Windows_Server-2019-English-Core-Base-2020.11.11"
+        },
+        {
+            "id": "ami-08236c512e6ff1440",
+            "description": "Windows_Server-2019-Chinese_Simplified-Full-Base-2020.11.11"
+        },
+        {
+            "id": "ami-0fb365aba6ee9f937",
+            "description": "Windows_Server-2016-English-Core-Base-2020.11.11"
+        },
+        {
+            "id": "ami-0e4f1613493023eab",
+            "description": "Windows_Server-2016-Chinese_Simplified-Full-Base-2020.11.11"
+        },
+        {
+            "id": "ami-026448bfda31565bf",
+            "description": "Windows_Server-2012-R2_RTM-English-64Bit-Base-2020.11.11"
+        },
+        {
+            "id": "ami-07b1138d1645c5445",
+            "description": "Windows_Server-2012-R2_RTM-Chinese_Simplified-64Bit-Base-2020.11.11"
+        }
+    ],
+    "cn-northwest-1": [
+        {
+            "id": "ami-0c6205ef045ce3916",
+            "description": "amzn2-ami-hvm-2.0.20201111.0-x86_64-gp2"
+        },
+        {
+            "id": "ami-0a3b3b10f714a0ff4",
+            "description": "amzn-ami-hvm-2018.03.0.20200918.0-x86_64-gp2"
+        },
+        {
+            "id": "ami-00034f98567a71889",
+            "description": "CentOS Linux 7 x86_64 HVM EBS ENA 1901_01-078dc9bd-ff68-475c-a300-c73597460a0c-ami-0ec6e6a87732adc44.4"
+        },
+        {
+            "id": "ami-00fe4b224bd5865e7",
+            "description": "CentOS-6.9-Nitro-8281452b-5861-4b00-9cc8-e2e10de74fec-ami-04605f6ef34947163.4"
+        },
+        {
+            "id": "ami-0946835481b531c1e",
+            "description": "RHEL-8.2.0_HVM-20200423-x86_64-0-Hourly2-GP2"
+        },
+        {
+            "id": "ami-0011d68f0a32c1346",
+            "description": "RHEL-7.9_HVM_BETA-20200422-x86_64-0-Hourly2-GP2"
+        },
+        {
+            "id": "ami-007d0f254ea0f8588",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-20201112.1"
+        },
+        {
+            "id": "ami-00e763676f84ee6bb",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-bionic-18.04-amd64-server-20200908"
+        },
+        {
+            "id": "ami-00bd8ab82ed8c7aac",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-xenial-16.04-amd64-server-20181223"
+        },
+        {
+            "id": "ami-01fb3f3d3317a050d",
+            "description": "ubuntu/images/hvm-ssd/ubuntu-trusty-14.04-amd64-server-20190514"
+        },
+        {
+            "id": "ami-0f28241ab972d08d1",
+            "description": "Windows_Server-2019-English-Core-Base-2020.11.11"
+        },
+        {
+            "id": "ami-0f1a226149592fca6",
+            "description": "Windows_Server-2019-Chinese_Simplified-Full-Base-2020.11.11"
+        },
+        {
+            "id": "ami-096a06d0c96109795",
+            "description": "Windows_Server-2016-English-Core-Base-2020.11.11"
+        },
+        {
+            "id": "ami-045d5388928e56bae",
+            "description": "Windows_Server-2016-Chinese_Simplified-Full-Base-2020.11.11"
+        },
+        {
+            "id": "ami-0927bc7cf6a405040",
+            "description": "Windows_Server-2012-R2_RTM-English-64Bit-Base-2020.11.11"
+        },
+        {
+            "id": "ami-081bff4941bab208f",
+            "description": "Windows_Server-2012-R2_RTM-Chinese_Simplified-64Bit-Base-2020.11.11"
+        }
+    ]
+}

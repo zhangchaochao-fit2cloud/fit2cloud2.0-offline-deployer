@@ -1,0 +1,107 @@
+name: fit2cloud
+services:
+
+  management-center:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: management-center
+    depends_on:
+      mysql:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      ansible:
+        condition: service_healthy
+
+  gateway:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: gateway
+
+  dashboard:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: dashboard
+
+  vm-service:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: vm-service
+
+  operation-analytics:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: operation-analytics
+
+  screen-display:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: screen-display
+
+  billing-center:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: billing-center
+
+  orchestrator-service:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: orchestrator-service
+
+  cloud-worker:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: cloud-worker
+
+  message-worker:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: message-worker
+
+  keycloak:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: keycloak
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  ansible:
+    extends:
+      file: ./external-compose/base-docker-compose.yml
+      service: ansible
+
+volumes:
+  host-opt-fit2cloud-conf:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/conf
+      o: bind
+  host-opt-fit2cloud-logs:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/logs
+      o: bind
+  host-opt-fit2cloud-git:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/git
+      o: bind
+  host-opt-fit2cloud-sftp-upload:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/sftp/sftpuser/upload
+      o: bind
+  host-opt-fit2cloud-upload:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/upload
+      o: bind
+  share-volume:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/plugins
+      o: bind
+
+networks:
+  cmp-network:
