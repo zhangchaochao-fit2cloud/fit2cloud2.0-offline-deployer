@@ -17,18 +17,19 @@ source "$SCRIPT_DIR/docker.sh"
 open_port() {
     local port=$1
     if [[ -z "$port" ]]; then
-        return
+        return 0
     fi
 
-    if systemctl is-active firewalld >/dev/null 2>&1; then
-        log_info_inline "打开防火墙端口 $port ..."
-        if ! firewall-cmd --list-ports | grep -qw "${port}/tcp"; then
-            firewall-cmd --zone=public --add-port=${port}/tcp --permanent >/dev/null 2>&1
-            firewall-cmd --reload >/dev/null 2>&1
-            systemctl restart docker >/dev/null 2>&1
-        fi
-        log_ok
+    if ! systemctl status firewalld >/dev/null 2>&1; then
+        return 0
     fi
+    log_info_inline "打开防火墙端口 $port ..."
+    if ! firewall-cmd --list-all | grep -w ports | grep -w "$port" >/dev/null; then
+        firewall-cmd --zone=public --add-port=${port}/tcp --permanent >/dev/null
+        firewall-cmd --reload >/dev/null
+        systemctl restart docker >/dev/null 2>&1
+    fi
+    log_ok
 }
 
 # 端口检测
@@ -36,18 +37,18 @@ check_port(){
     local port=$1
     local record=0
     if [[ -z "$port" ]]; then
-        return
+        return 0
     fi
 
     log_info_inline "端口 $port 检测 ..."
-    if command -v lsof >/dev/null 2>&1; then
+    if cmd_exists lsof; then
         record=$(lsof -iTCP:"$port" -sTCP:LISTEN | wc -l)
-    elif command -v netstat >/dev/null 2>&1; then
+    elif cmd_exists netstat; then
         record=$(netstat -tnl 2>/dev/null | awk '{print $4}' | grep -E "[:.]$port$" | wc -l)
-    elif command -v ss >/dev/null 2>&1; then
+    elif cmd_exists ss; then
         record=$(ss -tnl 2>/dev/null | awk '{print $4}' | grep -E "[:.]$port$" | wc -l)
     else
-        log_step_error "未检测到 lsof、netstat 或 ss 命令，端口检测跳过"
+        log_step_error "未找到端口检测工具(lsof/netstat/ss)，跳过检测"
         return 0
     fi
 
@@ -70,7 +71,7 @@ check_service_port(){
 # root 用户检测
 check_root(){
     print_subtitle "root 用户检测 ..."
-    if [[ "$(id -u)" == 0 ]]; then
+    if [[ $EUID -eq 0 ]]; then
         log_ok
         return 0
     else
@@ -80,65 +81,54 @@ check_root(){
 }
 
 # 操作系统检测
+get_os_version() {
+
+
+}
+# 操作系统检测
 check_os() {
     local record=0
     log_info_inline "操作系统检测..."
-    # Redhat
+
+    local supported=false
+
     if [[ -f /etc/redhat-release ]]; then
-        local redhat_version=$(grep -oE '[0-9]+\.[0-9]+' /etc/redhat-release)
-        local major_version=${redhat_version%%.*}
-        if [[ "$major_version" =~ ^(7|8)$ ]]; then
-            log_ok
-            return 0
-        else
-            log_step_error "仅支持 CentOS 7.x/8.x, RHEL 7.x/8.x"
-            return 1
+        os_info=$(cat /etc/redhat-release)
+        if [[ $os_info =~ CentOS\ ([7-8])\.* ]] || [[ $os_info =~ RHEL\ ([7-8])\.* ]]; then
+            supported=true
         fi
+    elif [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        case "$ID" in
+            ubuntu)
+                [[ $VERSION_ID =~ ^(20|22|24)\. ]] && supported=true
+                ;;
+            openEuler)
+                [[ $VERSION_ID =~ ^(22|23)\. ]] && supported=true
+                ;;
+            *)
+                supported=false
+                ;;
+        esac
+    elif [[ -f /etc/kylin-release ]]; then
+        supported=true
     fi
 
-    # Kylin
-    if [[ -f /etc/kylin-release ]]; then
+    if $supported; then
         log_ok
-    fi
-
-    # Other
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-
-        if [[ "$ID" == "ubuntu" ]]; then
-            local ubuntu_version=${VERSION_ID%%.*}
-            if [[ "$ubuntu_version" =~ ^(20|22|24)$ ]]; then
-                log_ok
-                return 0
-            else
-                color_msg "仅支持 Ubuntu 20/22/24"
-                return 1
-            fi
-        fi
-
-        if [[ "$ID" == "openEuler" ]]; then
-            local euler_version=${VERSION_ID%%.*}
-            if [[ "$euler_version" =~ ^(22|23)$ ]]; then
-                log_ok
-                return 0
-            else
-                log_step_error "仅支持 EulerOS 22/23"
-                return 1
-            fi
-        fi
-        log_step_error "不支持的操作系统"
+        return 0
+    else
+        log_step_error "仅支持 CentOS 7.x/8.x, RHEL 7.x/8.x, Kylin, Ubuntu 20/22/24, openEuler 22/23"
         return 1
     fi
-        log_step_error "无法识别操作系统"
-        return 1
 }
 
 
 # 服务器架构检测
 check_arch() {
     log_info_inline "服务器架构检测..."
-    arch=$(uname -m)
-    if [[ "$arch" == "x86_64" || "$arch" == "aarch64" ]]; then
+    local arch=$(uname -m)
+    if [[ $arch == "x86_64" ]] || [[ $arch == "aarch64" ]]; then
         return 0
         log_ok
     else
@@ -152,8 +142,8 @@ check_arch() {
 check_cpu() {
     log_info_inline "CPU检测..."
     arch=$(uname -m)
-    cpu_count=$(grep -c ^processor /proc/cpuinfo)
-    if (( cpu_count < 4 )); then
+    local cores=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo)
+    if [[ $cores -lt 4 ]]; then
         log_step_warn "CPU 小于 4 核，建议至少 4 核"
         return 1
     else
@@ -166,7 +156,7 @@ check_cpu() {
 check_memory() {
     log_info_inline "内存检测..."
     mem_total_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
-    if (( mem_total_kb < 16000000 )); then
+    if [[ $mem_kb -lt 16000000 ]]; then
         log_step_warn "内存小于 16G，建议至少 16G"
         return 1
     else
@@ -178,9 +168,10 @@ check_memory() {
 # 磁盘空间检测
 check_disk() {
     log_info_inline "磁盘空间检测..."
+    local installer_path=$(get_env_value CE_INSTALL_PATH)
     # 获取安装路径所在磁盘剩余空间(kb)
-    disk_avail_kb=$(df -Pk "$CE_INSTALL_PATH" | awk 'NR==2 {print $4}')
-    if (( disk_avail_kb < 200000000 )); then
+    disk_avail_kb=$(df -Pk "$installer_path" | awk 'NR==2 {print $4}')
+    if [[ $available_kb -lt 200000000 ]]; then
         log_step_warn "剩余空间小于 200G，建议至少 200G"
         return 1
     else
@@ -189,4 +180,3 @@ check_disk() {
     fi
 }
 
-}

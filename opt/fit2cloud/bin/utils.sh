@@ -5,120 +5,41 @@
 # =============================================================================
 
 # 颜色定义
-RED=$'\033[0;31m'
-GREEN=$'\033[0;32m'
-YELLOW=$'\033[1;33m'
-BLUE=$'\033[0;34m'
-CYAN=$'\033[0;36m'
-NC=$'\033[0m' # No Color
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
 
 # =============================================================================
 # 日志输出函数
 # =============================================================================
 
-#SPINNER_RUNNING=true
-
-#show_dots_spinner() {
-#    local msg="$1"
-#    local delay=0.5
-#    local dots=""
-#    local i=0
-#
-#    while $SPINNER_RUNNING; do
-#        dots=$(printf "%*s" $((i % 4)) "" | tr ' ' '.')
-#        echo -ne "\r${msg}${dots}   "  # 清除残留字符
-#        sleep "$delay"
-#        ((i++))
-#    done
-#}
-
-
-function get_padding {
-    local msg=$1
-    local total_width=70
-    # 非中文数量
-    len1=$(echo "$msg" | grep -o '[^一-龥]' | wc -l)
-    # 中文数量
-    len2=$(echo "$msg" | grep -o "[一-龥]" | wc -l)
-    # 中文x2 + 英文
-    length=$(( len1 + len2 * 2 ))
-    # 计算出空格并填充
-    printf -v padding '%*s' $(( total_width - length )) ''
-}
-
-log_info_inline() {
-    local msg="$1"
-    msg_length=${#msg}
-
-    get_padding $msg
-    echo -ne "${GREEN}[INFO] ${NC} $1 $padding"
-}
-
-log_step_info() {
-    echo -e "${GREEN}$1${NC}"
-}
 log_info() {
-    echo -e "${GREEN}[INFO] ${NC}$1"
-}
-
-#log_warn_inline() {
-#    echo -ne "${YELLOW}[WARN]${NC} $1"
-#}
-
-log_step_warn() {
-    echo -e "${YELLOW}$1${NC}"
+    echo -e "${GREEN}[INFO]${NC} $1"
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN] ${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
-log_step_error() {
-    echo "$RED" | od -a
-    echo -e "${RED}$1${NC}"
-}
 log_error() {
-    echo -e "${RED}[ERROR] ${NC} $1"
-}
-
-log_step_debug() {
-    if [[ "${DEBUG:-false}" == "true" ]]; then
-        echo -e "${CYAN}$1${NC}"
-    fi
+    echo -e "${RED}[ERROR]${NC} $1"
 }
 
 log_debug() {
     if [[ "${DEBUG:-false}" == "true" ]]; then
-        echo -e "${CYAN}[DEBUG] ${NC} $1"
+        echo -e "${CYAN}[DEBUG]${NC} $1"
     fi
 }
 
-log_ok() {
-    echo -e "${CYAN}OK${NC} $1"
-}
-
-log_step_error() {
-    echo -e "${RED}$1${NC} "
-}
-
-log_error() {
-    echo -e "${RED}[ERROR] ${NC} $1"
-}
-
-log_step_success() {
-    echo -e "${CYAN}$1${NC} "
-}
-
-log_success() {
-    echo -e "${CYAN}[SUCCESS]${NC} $1"
-}
-
 print_title() {
-    echo -e "\n\n${CYAN}******************************\t $1 \t******************************${NC}\n"
+    echo -e "\n\n${CYAN}**********\t $1 \t**********${NC}\n"
 }
 
 print_subtitle() {
-    echo -e "\n${BLUE}------------------\t $1 \t------------------${NC}\n"
+    echo -e "${BLUE}------\t $1 \t------${NC}\n"
 }
 
 # =============================================================================
@@ -130,36 +51,6 @@ get_env() {
     local var_name=$1
     local default_value=$2
     eval "echo \${$var_name:-$default_value}"
-}
-
-# 读取配置变量
-get_env_value() {
-  # 脚本目录
-  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local key="$1"
-  # env 环境变量文件
-  local env_file="${2:-$script_dir/../.env}"
-
-  # 使用 grep 和 shell 字符串处理提取变量值（忽略注释和空行）
-  local value
-  value=$(grep -E "^$key=" "$env_file" | grep -v '^#' | head -n 1 | cut -d'=' -f2-)
-
-  echo "$value"
-}
-
-# 修改配置变量
-set_env_value() {
-  # 脚本目录
-  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local key="$1"
-  local new_value="$2"
-  local env_file="${3:-$script_dir/../.env}"
-
-  if grep -qE "^${key}=" "$file"; then
-    sed -i.bak -E "s/^(${key}=).*/\1${new_value}/" "$env_file"
-  else
-    echo "${key}=${new_value}" >> "$env_file"
-  fi
 }
 
 # 检查必需的环境变量
@@ -179,30 +70,6 @@ export_env_to_file() {
     local var_name=$2
     local var_value=$3
     echo "$var_name=$var_value" >> "$file_path"
-}
-
-# 检查命令是否存在
-cmd_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# 获取系统IP地址
-get_system_ip() {
-    ip route get 1 | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p'
-}
-
-# 安全执行命令
-safe_execute() {
-    local cmd="$1"
-    local msg="$2"
-
-    log_info_inline "$msg..."
-    if ! eval "$cmd" >>"$INSTALL_LOG" 2>&1; then
-        log_step_error "执行失败"
-        return 1
-
-    log_ok
-    return 0
 }
 
 # =============================================================================

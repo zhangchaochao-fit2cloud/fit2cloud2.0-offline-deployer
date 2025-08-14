@@ -10,6 +10,10 @@ EXT_COMPOSE_DIR="$SCRIPT_DIR/../external-compose"
 # env 环境变量文件
 ENV_FILE="$SCRIPT_DIR/../.env"
 
+# docker 配置文件路径
+DOCKER_CONFIG_FOLDER="/etc/docker"
+DOCKER_CONFIG_FILE="${DOCKER_CONFIG_FOLDER}/daemon.json"
+
 # 远程下载 docker 地址
 DOCKER_PACKAGE_URL="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker.zip"
 DOCKER_PACKAGE_URL_ARM64="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker-arm64.zip"
@@ -230,64 +234,128 @@ get_docker_dir() {
 # Docker 检测
 check_docker() {
     log_info_inline "Docker 检测..."
-    if ! command -v docker >/dev/null 2>&1; then
+    if ! cmd_exists docker; then
         log_step_error "未安装"
         return 1
-    else
-        docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null | cut -d. -f1)
-        if [[ -z "$docker_version" ]]; then
-            log_step_error "无法获取版本"
-            return 1
-        elif (( docker_version < 18 )); then
-            log_step_error"版本需 >= 18"
-            return 1
-        else
-            docker_dir=$(get_docker_dir)
-            log_step_success "OK 存储目录：$docker_dir"
-        fi
     fi
+    docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null | cut -d. -f1)
+    if [[ -z $version ]] || [[ $version -lt 18 ]]; then
+        log_step_error "Docker 版本需要 18 以上"
+        return 1
+    fi
+
+    docker_dir=$(get_docker_dir)
+    log_step_success "OK 存储目录：$docker_dir"
+    return 0
 }
 
 # Docker compose 检测
 check_docker_compose() {
     log_info_inline "Docker compose 检测..."
-    if ! command -v docker-compose >/dev/null 2>&1; then
+    if ! cmd_exists docker-compose; then
         log_step_error "未安装"
         return 1
-    else
-        log_ok
-        return 0
+    fi
+    log_ok
+    return 0
+}
+
+check_required_ports() {
+    local compose_file="${BASE_DIR}/fit2cloud/docker-compose.yml"
+
+    if [[ -f $compose_file ]]; then
+        local ports=$(grep -A 1 "ports:" "$compose_file" | grep "\-.*:" | awk -F":" '{print $1}' | awk '{print $NF}')
+        for port in $ports; do
+            check_port "$port"
+        done
     fi
 }
 
 # 安装 docker
 install_docker() {
+
     print_subtitle "安装 Docker 运行时环境..."
+    local installer_path=$(get_env_value CE_INSTALL_PATH)
+    local docker_path="$installer_path/fit2cloud/docker"
 
-    if [[ -z "$hasDocker" ]]; then
-      if [ ! -f "$dockerConfigFile" ]; then
-        create_docker_config
-      fi
-
-      chmod -R +x ../fit2cloud/tools/docker/bin/
-
-      if [[ $majorVersion == 7 || -f /etc/kylin-release || $majorVersion == 20 || $majorVersion == 22 || $majorVersion == 24 ]]; then
-        setup_docker_files_centos7
-      elif [[ $majorVersion == 8 ]]; then
-        install_rpms_centos8
-      else
-        log_error "操作系统版本不符合要求，请使用 CentOS 7.x/8.x, RHEL 7.x/8.x, Ubuntu 20/22/24"
-        exit 1
-      fi
-
-      echo -ne "Docker \t\t\t........................ "
-      colorMsg $green "[OK] 存储目录：$dockerPath"
-    else
-      echo -ne "Docker \t\t\t........................ "
-      colorMsg $green "[OK] 已存在 Docker 运行时环境，跳过安装"
+    if cmd_exists docker; then
+        log_info_inline "Docker..."
+        log_step_success "已存在 Docker 运行时环境，跳过安装"
+        return 0
     fi
 
-    start_enable_docker
+    mkdir -p "$docker_path"
+
+    # 创建Docker配置
+    if [[ ! -f $DOCKER_CONFIG_FILE ]]; then
+        log_info_inline "配置 Docker 存储目录..."
+        mkdir -p "$DOCKER_CONFIG_FOLDER"
+        cat > "$DOCKER_CONFIG_FILE" <<EOF
+{
+  "data-root": "${docker_path}",
+  "graph": "${docker_path}",
+  "hosts": ["unix:///var/run/docker.sock"],
+  "log-driver": "json-file",
+  "log-opts": {
+      "max-size": "124m",
+      "max-file": "10"
+  }
+}
+EOF
+          log_ok
+    fi
+
+    log_info_inline "安装 Docker ..."
+    # 根据系统版本安装Docker
+    local os_version=""
+    if [[ -f /etc/redhat-release ]]; then
+        os_version=$(cat /etc/redhat-release | grep -oE '[0-9]+' | head -1)
+    elif [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        os_version=$(echo "$VERSION_ID" | cut -d'.' -f1)
+    fi
+
+    case $os_version in
+        7|*kylin*)
+            chmod -R +x ../tools/docker/bin/
+            cp -p ../tools/docker/bin/* /usr/bin/
+            cp ../tools/docker/service/docker.service /etc/systemd/system/
+            chmod 754 /etc/systemd/system/docker.service
+            ;;
+        8)
+            local docker_log="/tmp/docker-install.log"
+            rpm -ivh ../tools/docker-rhel8/*.rpm --force --nodeps >> "$docker_log" 2>&1
+            cp ../tools/docker-rhel8/docker-compose /usr/local/bin
+            chmod +x /usr/local/bin/docker-compose
+            ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+            sed -i 's@-H fd:// @@g' /usr/lib/systemd/system/docker.service
+            ;;
+        20|22|24)
+            chmod -R +x ../tools/docker/bin/
+            cp -p ../tools/docker/bin/* /usr/bin/
+            cp ../tools/docker/service/docker.service /etc/systemd/system/
+            chmod 754 /etc/systemd/system/docker.service
+            ;;
+        *)
+            log_step_error "不支持的操作系统版本"
+            return 1
+            ;;
+    esac
+    log_ok
+
+    # 启动Docker服务
+    safe_execute "systemctl daemon-reload" "加载systemd配置"
+    safe_execute "systemctl start docker" "启动Docker服务"
+    safe_execute "systemctl enable docker" "设置Docker开机启动"
+
+    # 配置系统参数
+    if ! grep -q "vm.max_map_count" /etc/sysctl.conf; then
+        log_info_inline "配置系统参数..."
+        echo "vm.max_map_count=262144" >> /etc/sysctl.conf
+        sysctl -p /etc/sysctl.conf >> "$INSTALL_LOG"
+        log_ok
+    fi
+
 }
 
 # 安装 docker
@@ -363,26 +431,19 @@ check_docker_exists() {
 # Docker 检测
 check_docker() {
     log_info_inline "Docker 检测..."
-    if ! command -v docker >/dev/null 2>&1; then
+    if ! cmd_exists docker; then
         log_ok
         return 0
     fi
 
     # 获取 Docker 主版本号
-    local dockerVersion
-    dockerVersion=$(docker info --format '{{.ServerVersion}}' 2>/dev/null | awk -F. '{print $1}')
-    if [[ -z "$dockerVersion" ]]; then
-        log_step_error "无法获取 Docker 版本"
-        return 1
-    fi
-
-    if (( dockerVersion < 18 )); then
+    local version=$(docker info --format '{{.ServerVersion}}' 2>/dev/null | awk -F. '{print $1}')
+    if [[ -z $version ]] || [[ $version -lt 18 ]]; then
         log_step_error "Docker 版本需要 18 以上"
         return 1
     fi
 
-    local dockerDir
-    dockerDir=$(get_docker_dir)
+    local docker_dir=$(get_docker_dir)
     log_step_success "存储目录：$dockerDir，请确保目录空间充足"
 }
 
@@ -390,11 +451,11 @@ check_docker() {
 check_docker_compose() {
     echo -ne "docker-compose 检测 \t........................ "
 
-    if ! command -v docker-compose >/dev/null 2>&1; then
-        colorMsg $red "[ERROR] 未安装 docker-compose"
-        validationPassed=0
-        return
+    if ! cmd_exists docker-compose; then
+        log_step_error "[ERROR] 未安装 docker-compose"
+        return 1
     fi
 
-    colorMsg $green "[OK]"
+    log_ok
+    return 0
 }

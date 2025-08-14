@@ -1,0 +1,468 @@
+#!/bin/bash
+# chkconfig: 2345 10 90
+# description: fit2cloud service
+
+action=${1-}
+target=${2-}
+mode=${3-}
+
+f2c_install_dir="/opt"
+extension_dir="${f2c_install_dir}/fit2cloud/extensions"
+log_dir="${f2c_install_dir}/fit2cloud/logs"
+docker_compose_file_args="-f ${f2c_install_dir}/fit2cloud/docker-compose.yml"
+env_file="${f2c_install_dir}/fit2cloud/.env"
+source $env_file
+if [ "1${CE_MODE}" == "1ha" ]; then
+    docker_compose_file_args="--env-file ${env_file} -f ${f2c_install_dir}/fit2cloud/external-compose/ha-docker-compose.yml"
+fi
+
+if [ -d $extension_dir ]; then
+    for extension in $(ls $extension_dir); do
+        current_extension_dir="$extension_dir/$extension"
+        if [ ! -d $current_extension_dir ]; then
+            continue
+        fi
+
+        for extension_file_name in $(ls $current_extension_dir); do
+            extension_file="$current_extension_dir/$extension_file_name"
+            if [ ! -f $extension_file ]; then
+                continue
+            fi
+
+            if [ "$extension_file_name" == "docker-compose.yml" ]; then
+                docker_compose_file_args="$docker_compose_file_args -f $extension_file"
+            fi
+        done
+    done
+fi
+
+EXE="docker-compose $docker_compose_file_args"
+
+options=$(getopt -o w: -l wait-time: -- "$@")
+eval set -- "$options"
+
+# 默认值
+WAIT_TIME=30
+while true; do
+    case "$1" in
+        -w|--wait-time)
+            WAIT_TIME=$2
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "未知参数: $1"
+            exit 1
+            ;;
+    esac
+done
+
+function printTitle()
+{
+  echo -e "\n\n**********\t ${1} \t**********\n"
+}
+
+function waitingAndCheck
+{
+    local time=${1:-$WAIT_TIME}
+    for (( i = 0; i < time*2; i++ )); do
+        target=
+        startNum=$(service fit2cloud status | grep -c 'starting')
+        exitedListNum=$(service fit2cloud status | grep -c 'Exit')
+        unhealthyListNum=$(service fit2cloud status | grep -c 'unhealthy')
+
+        exitedList=(`service fit2cloud status | grep Exit | awk '{print $1}'`)
+        for exitedContainer in "${exitedList[@]}"
+        do
+            target="${exitedContainer}"
+            restartFIT2CLOUD
+        done
+
+        if [ "${startNum}" -ne 0  ] || [ "${unhealthyListNum}" -ne 0 ] || [ "${exitedListNum}" -ne 0 ];then
+            echo ''
+            echo "${time}分钟内将持续监测服务状态，直到全部服务运行正常，若有异常服务将自动重启，取消监测请按Ctrl+C(不会影响服务状态)"
+            statusFIT2CLOUD
+            sleep 30
+        else
+            statusFIT2CLOUD
+            break
+        fi
+    done
+}
+
+function recreateFIT2CLOUD
+{
+    memTotal=`cat /proc/meminfo | grep MemTotal | awk '{print $2}'`
+    if [ $memTotal -lt 16267060 ];then
+        echo "警告: 内存小于16G，FIT2CLOUD所在机器的内存最好大于等于16G"
+    fi
+
+    if [[ $# -gt 0 ]]; then
+        ${EXE} up -d "$@"
+        return
+    fi
+
+    if [[ -n "${target}" ]];then
+        ${EXE} up -d "${target}"
+        return
+    fi
+
+    ${EXE} up -d
+
+    waitingAndCheck "$WAIT_TIME"
+}
+
+function startFIT2CLOUD
+{
+    memTotal=`cat /proc/meminfo | grep MemTotal | awk '{print $2}'`
+    if [ $memTotal -lt 16267060 ];then
+        echo "警告: 内存小于16G，FIT2CLOUD所在机器的内存最好大于等于16G"
+    fi
+
+    if [[ $# -gt 0 ]]; then
+        ${EXE} up -d --no-recreate "$@"
+        return
+    fi
+
+    if [[ -n "${target}" ]];then
+        ${EXE} up -d --no-recreate "${target}"
+        return
+    fi
+
+    ${EXE} up -d --no-recreate
+
+    waitingAndCheck "$WAIT_TIME"
+}
+
+function stopFIT2CLOUD
+{
+    if [[ $# -gt 0 ]]; then
+        ${EXE} stop "$@" && ${EXE} rm -f -v "$@"
+        return
+    fi
+
+    if [[ -n "${target}" ]];then
+        ${EXE} stop "${target}" && ${EXE} rm -f -v "${target}"
+        return
+    fi
+    ${EXE} down -v -t 120
+}
+
+function restartFIT2CLOUD
+{
+    if [[ $# -gt 0 ]]; then
+        stopFIT2CLOUD $@
+        startFIT2CLOUD $@
+        return
+    fi
+
+    stopFIT2CLOUD
+    startFIT2CLOUD
+    waitingAndCheck "$WAIT_TIME"
+}
+
+function statusFIT2CLOUD
+{
+    if [[ -n "${target}" ]];then
+        ${EXE} ps "${target}"
+        return
+    fi
+    ${EXE} ps
+}
+
+function logsFIT2CLOUD
+{
+    ${EXE} logs -f "${@:2}"
+}
+
+function rawFIT2CLOUD
+{
+    ${EXE} "${@:2}"
+}
+
+function fullUpgradeFIT2CLOUD
+{
+    target=""
+    ${EXE} pull && stopFIT2CLOUD && recreateFIT2CLOUD
+    waitingAndCheck "$WAIT_TIME"
+}
+
+
+function localUpgradeFIT2CLOUD
+{
+    image_dir=""
+    if [[ "x$1" == "x" ]];then
+      image_dir="${installerPath}/images"
+    else
+      if [ -d $1 ]; then
+        image_dir="$1"
+      else
+        echo "无效的镜像路径：$1"
+        exit 1
+      fi
+    fi
+    if [ ! -d ${image_dir} ]; then
+        echo "无效的镜像路径：${image_dir}"
+        exit 1
+    fi
+    printTitle "开始加载镜像"
+    for docker_image in ${image_dir}/*; do
+      temp_file=$(basename $docker_image)
+      printf "%-40s %s" "${temp_file}" "........................ "
+      docker load -q -i ${image_dir}/$temp_file 2>&1 > /dev/null
+      echo -e "\e[32m[OK]\e[0m "
+    done
+
+    printTitle "重启服务"
+    ${EXE} down -v -t 120
+    if [[ "x" != "x${exec_modules}" ]];then
+        ${EXE} up -d $exec_modules
+        waitingAndCheck "$WAIT_TIME"
+        return
+    fi
+
+    ${EXE} up -d
+
+    waitingAndCheck "$WAIT_TIME"
+}
+
+function backupFIT2CLOUD
+{
+    image_names=`${EXE} config | grep image: | awk -F "image:" '{print $NF}'`
+    if [[ "x${target}" == "x" ]];then
+      image_names=`${EXE} config | grep image: | awk -F "image:" '{print $NF}'`
+    else
+      image_names=`${EXE} config | grep image: | awk -F "image:" '{print $NF}' | grep ${target}`
+    fi
+    backup_dir="${installerPath}/fit2cloud/backup/$(date "+%Y-%m-%d")"
+    if [ ! -d ${backup_dir} ]; then
+        mkdir -p ${backup_dir}
+    fi
+    printTitle "开始备份镜像"
+    for image_name in ${image_names}; do
+      name=$(echo ${image_name} | awk -F":" '{print $1}'  | awk -F"/" '{ print $3 }')
+      printf "%-40s %s" "${name}" "........................ "
+      docker save -o ${backup_dir}/${name}.tar ${image_name}
+      echo -e "\e[32m[OK]\e[0m "
+    done
+}
+
+# 检查容器是否存在
+function checkContainerExists() {
+    local container_name="$1"
+    local container_exists=$(docker ps -aqf "name=$container_name")
+
+    if [ -z "$container_exists" ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+# 检查容器状态是否正常
+function checkContainerStatus() {
+    local container_name="$1"
+    local container_status=$(docker inspect -f '{{.State.Status}}' "$container_name")
+
+    if [ "$container_status" != "running" ]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+function check_jq() {
+    # 尝试运行 jq --version 来检测 jq 是否已安装
+    if ! command -v jq &> /dev/null; then
+        echo "jq 没有找到，请安装 jq。"
+        echo "在 Debian/Ubuntu 上，你可以使用 'sudo apt-get install jq' 来安装。"
+        echo "在 Fedora 上，你可以使用 'sudo dnf install jq' 来安装。"
+        echo "在 CentOS/RHEL 上，你可以使用 'sudo yum install jq' 来安装。"
+        echo "在 macOS 上，如果你使用 Homebrew，可以使用 'brew install jq' 来安装。"
+        exit 0
+    fi
+}
+
+function incrementUpgradeFIT2CLOUD
+{
+    check_jq
+    ${EXE} pull
+    # 服务名，容器名，镜像，是否关联 share-files
+    modules=$(${EXE} config --format json | jq -r '.services | to_entries[] | "\(.key) \(.value.container_name) \(.value.image)"')
+    restartServices=()
+
+    while IFS= read -r module; do
+        service=$(echo $module | awk -F ' ' '{print $1}')
+        container=$(echo $module | awk -F ' ' '{print $2}')
+        image=$(echo $module | awk -F ' ' '{print $3}')
+
+        if checkContainerExists "$container" && checkContainerStatus "$container"; then
+            currentImageHash=$(docker inspect "$container" --format '{{.Image}}')
+        fi
+
+        # 最新镜像信息
+        newImageHash=$(docker images "$image" --no-trunc --format '{{.ID}}')
+
+        # 比较当前镜像和最新镜像是否一致
+        if [ "$currentImageHash" != "$newImageHash" ]; then
+            restartServices+=("$service")
+        fi
+    done < <(echo "$modules")
+
+    if [ ${#restartServices[@]} -gt 0 ]; then
+       restartFIT2CLOUD "${restartServices[@]}"
+    fi
+
+    waitingAndCheck "$WAIT_TIME"
+}
+
+function upgradeFIT2CLOUD
+{
+    if [[ "${target}" == "increment" ]];then
+      incrementUpgradeFIT2CLOUD
+      return
+    fi
+    if [[ "${target}" == "full" ]];then
+      fullUpgradeFIT2CLOUD
+      return
+    fi
+    if [[ "${target}" == "local" ]];then
+      localUpgradeFIT2CLOUD "${@:3}"
+      return
+    fi
+
+    if [[ -n "${target}" ]];then
+        ${EXE} pull "${target}" && stopFIT2CLOUD && recreateFIT2CLOUD
+        return
+    fi
+
+    fullUpgradeFIT2CLOUD
+}
+
+function cleanFIT2CLOUD
+{
+    case "${target}" in
+        image)
+            cleanImage
+            exit 0
+            ;;
+        log)
+            cleanLog
+            exit 0
+            ;;
+        *)
+            # 默认行为，删除悬虚镜像和清理日志
+            cleanImage
+            cleanLog
+            exit 0
+            ;;
+    esac
+}
+
+function cleanImage
+{
+    read -p "会删除所有未使用的镜像（yes/no）: " choice
+    case "$choice" in
+        yes)
+            docker image prune -f
+            echo "镜像已删除。"
+            ;;
+        no)
+            echo "操作已取消。"
+            ;;
+        *)
+            # 无效输入
+            echo "无效的选项。请输入yes或no。"
+            return 1
+            ;;
+      esac
+}
+
+function cleanLog
+{
+    echo "请选择操作："
+    echo "1) 删除所有日志"
+    echo "2) 保留最近7天的日志，删除其余"
+    echo "3) 退出"
+    read -p "请输入选项 (1/2/3): " choice
+
+    case "$choice" in
+        1)
+            # 删除所有日志
+            find "${log_dir}" -maxdepth 2 -type d -name "history" -exec rm -rf {} +
+            echo "所有日志目录已删除。"
+            ;;
+        2)
+            # 保留最近7天的日志
+            echo "正在删除7天前的日志..."
+            find "${log_dir}" -maxdepth 2 -type d -name "history" | while read dir; do
+                find "$dir" -type f -name "*.log" -mtime +7 -exec ls {} \;
+            done
+            echo "7天前的日志已删除。"
+            ;;
+        3)
+            # 退出
+            echo "操作已取消。"
+            return 0
+            ;;
+        *)
+            # 无效输入
+            echo "无效的选项。请输入1、2或3。"
+            return 1
+            ;;
+    esac
+}
+
+export HOSTNAME=$HOSTNAME
+case "$action" in
+    recreate)
+        recreateFIT2CLOUD
+        ;;
+    start)
+        startFIT2CLOUD
+        ;;
+    stop)
+        stopFIT2CLOUD
+        ;;
+    restart)
+        restartFIT2CLOUD
+        ;;
+    status)
+        statusFIT2CLOUD
+        ;;
+    upgrade)
+        upgradeFIT2CLOUD "$@"
+        ;;
+    backup)
+        backupFIT2CLOUD
+        ;;
+    logs)
+        logsFIT2CLOUD "$@"
+        ;;
+    raw)
+        rawFIT2CLOUD "$@"
+        ;;
+    clean)
+        cleanFIT2CLOUD "$@"
+        ;;
+    *)
+            echo "
+Usage: $0  [COMMAND] [ARGS...]
+
+start         启动FIT2CLOUD服务
+recreate      重新创建FIT2CLOUD服务
+stop          停止FIT2CLOUD服务
+restart       重启FIT2CLOUD服务
+status        检查FIT2CLOUD服务
+backup        备份FIT2CLOUD服务 ARGS: module(模块) 默认备份到 .env 配置的安装目录 backup/当前日期
+upgrade       更新FIT2CLOUD服务 ARGS: module(模块), increment(增量更新), full(全量更新) local(本地更新 args: 镜像路径，默认当前目录) 不加默认 full
+logs          查看服务日志
+clean         清理FIT2CLOUD服务 ARGS: image, log, 默认都清理
+
+raw           执行原始 docker-compose 命令
+"
+                ;;
+esac
