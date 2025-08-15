@@ -99,6 +99,7 @@ pull_docker_images() {
 #                log_step_error "$output"
 #                exit 1
 #            fi
+            echo "${image_name}"
             docker pull --platform="linux/${platform}" "${image_name}" >/dev/null 2>&1 || {
                 log_step_error "异常"
                 exit 1
