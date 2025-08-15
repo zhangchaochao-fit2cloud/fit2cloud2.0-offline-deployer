@@ -200,7 +200,7 @@ safe_execute() {
     if ! eval "$cmd" >>"$INSTALL_LOG" 2>&1; then
         log_step_error "执行失败"
         return 1
-
+    fi
     log_ok
     return 0
 }
