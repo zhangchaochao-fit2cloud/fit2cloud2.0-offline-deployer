@@ -51,7 +51,7 @@ get_docker_compose_exe() {
     local args=$(get_docker_compose_args)
 
     if [[ ! -z "$REGISTRY_URL" ]]; then
-        echo "IMAGE_ADDRESS=$REGISTRY_URL docker-compose $args"
+        echo "IMAGE_ADDRESS='${REGISTRY_URL}' docker-compose $args"
         return
     fi
 
