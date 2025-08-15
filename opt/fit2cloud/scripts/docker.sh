@@ -50,12 +50,12 @@ get_docker_compose_exe() {
     # 获取构建参数
     local args=$(get_docker_compose_args)
 
-    if [[ ! -z "$REGISTRY_URL" ]]; then
-        echo "IMAGE_ADDRESS='${REGISTRY_URL}' docker-compose $args"
-        return
+    if [[ -n "$REGISTRY_URL" ]]; then
+        # 以数组方式返回
+        echo "env IMAGE_ADDRESS=${REGISTRY_URL} docker-compose $args"
+    else
+        echo "docker-compose $args"
     fi
-
-    echo "docker-compose $args"
 }
 
 # 获取所有服务镜像
