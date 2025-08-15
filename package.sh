@@ -228,7 +228,7 @@ generate_package_file() {
 }
 
 prepare_installer_files() {
-    log_info_inline "准备安装器文件"
+    log_info_inline "准备安装文件"
 
     # 扩展插件目录
     if [ -d 'extensions' ];then
