@@ -190,7 +190,6 @@ download_remote_docker() {
 
 # 下载 docker
 download_docker() {
-    log_info_inline "下载Docker安装包"
     # 平台架构
     local platform=$(get_env_value PLATFORM)
     # docker tools 包
@@ -198,6 +197,7 @@ download_docker() {
 
     local docker_tools_dir="$1"
     if [[ -z "$docker_tools_dir" ]]; then
+        log_info_inline "下载Docker安装包"
         log_step_error "没有指定 Docker 下载目录"
         exit 1
     fi
@@ -209,7 +209,9 @@ download_docker() {
 
     # 本地 docker 目录没有配置，默认从远程获取
     if [[ -d "${FROM_DOCKER_LOCAL_DIR}" ]];then
+      log_info_inline "下载Docker安装包"
       download_local_docker $docker_tools_dir $docker_package
+      log_ok
     else
       download_remote_docker $docker_tools_dir $docker_package
     fi
@@ -227,8 +229,6 @@ download_docker() {
 
     # 回到上次的目录
     cd -
-
-    log_ok
 }
 
 # 获取 Docker 存储目录

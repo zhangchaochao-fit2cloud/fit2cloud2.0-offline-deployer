@@ -213,14 +213,14 @@ download_file() {
     if cmd_exists wget; then
         # 测试 wget 是否支持 --show-progress
         if wget --help 2>&1 | grep -q -- '--show-progress'; then
-            wget --show-progress -O "$output" "$url"
+            wget --quiet --show-progress --progress=bar:force -O "$output" "$url"
         else
             if cmd_exists curl; then
-                echo -n "$output"
-                curl -L --progress-bar -o "$output" "$url"
-                echo " [DONE]"
+                echo "Downloading $output ..."
+                curl -L -o "$output" --progress-bar --write-out "%{http_code}" "$url" | tr -d '\n'
+                echo "Download finished"
             else
-                wget -O "$output" "$url"
+                wget --quiet --progress=bar:force -O "$output" "$url"
             fi
         fi
     else
