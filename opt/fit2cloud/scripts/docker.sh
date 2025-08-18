@@ -180,10 +180,10 @@ download_remote_docker() {
     cd ${docker_tools_dir}
 
     # 下载远程 docker
-    wget --quiet --show-progress --progress=bar:force -O "./${docker_package}" "${DOCKER_PACKAGE_URL}"
+    download_file "${DOCKER_PACKAGE_URL}" "./${docker_package}"
 
     # 下载 redhat 版本 docker
-    wget --quiet --show-progress --progress=bar:force -O "./docker-rhel8.tar.gz" "${DOCKER_PACKAGE_URL_RHEL8}"
+    download_file "${DOCKER_PACKAGE_URL_RHEL8}" "./docker-rhel8.tar.gz"
 
     cd -
 }

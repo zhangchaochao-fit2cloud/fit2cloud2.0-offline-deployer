@@ -205,6 +205,30 @@ safe_execute() {
     return 0
 }
 
+
+download_file() {
+    local url="$1"
+    local output="$2"
+    # 默认使用 wget
+    if cmd_exists wget; then
+        # 测试 wget 是否支持 --show-progress
+        if wget --help 2>&1 | grep -q -- '--show-progress'; then
+            echo "Downloading $output using wget with progress bar..."
+            wget --show-progress -O "$output" "$url"
+        else
+            echo "Downloading $output using wget (no fancy progress)..."
+            wget -O "$output" "$url"
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        echo -n "$output"
+        curl -L --progress-bar -o "$output" "$url"
+        echo " [DONE]"
+    else
+        echo "Error: neither wget nor curl is installed." >&2
+        return 1
+    fi
+}
+
 # =============================================================================
 # Docker 相关函数
 # =============================================================================
