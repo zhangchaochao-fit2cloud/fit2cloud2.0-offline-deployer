@@ -202,10 +202,10 @@ download_docker() {
         exit 1
     fi
 
-    if [[ "$DRY_RUN" == "true" ]]; then
-      log_step_success "跳过"
-      return
-    fi
+#    if [[ "$DRY_RUN" == "true" ]]; then
+#      log_step_success "跳过"
+#      return
+#    fi
 
     # 本地 docker 目录没有配置，默认从远程获取
     if [[ -d "${FROM_DOCKER_LOCAL_DIR}" ]];then

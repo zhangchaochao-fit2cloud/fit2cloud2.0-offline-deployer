@@ -213,16 +213,16 @@ download_file() {
     if cmd_exists wget; then
         # 测试 wget 是否支持 --show-progress
         if wget --help 2>&1 | grep -q -- '--show-progress'; then
-            echo "Downloading $output using wget with progress bar..."
             wget --show-progress -O "$output" "$url"
         else
-            echo "Downloading $output using wget (no fancy progress)..."
-            wget -O "$output" "$url"
+            if cmd_exists curl; then
+                echo -n "$output"
+                curl -L --progress-bar -o "$output" "$url"
+                echo " [DONE]"
+            else
+                wget -O "$output" "$url"
+            fi
         fi
-    elif command -v curl >/dev/null 2>&1; then
-        echo -n "$output"
-        curl -L --progress-bar -o "$output" "$url"
-        echo " [DONE]"
     else
         echo "Error: neither wget nor curl is installed." >&2
         return 1
