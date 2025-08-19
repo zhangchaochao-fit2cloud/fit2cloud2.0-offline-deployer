@@ -278,14 +278,13 @@ check_required_ports() {
 
 # 安装 docker
 install_docker() {
-
     print_subtitle "安装 Docker 运行时环境..."
     local installer_path=$(get_env_value CE_INSTALL_PATH)
     local docker_path="$installer_path/fit2cloud/docker"
 
     if cmd_exists docker; then
         log_info_inline "Docker..."
-        log_step_success "已存在 Docker 运行时环境，跳过安装"
+        log_step_success "已存在，跳过安装"
         return 0
     fi
 
@@ -298,7 +297,6 @@ install_docker() {
         cat > "$DOCKER_CONFIG_FILE" <<EOF
 {
   "data-root": "${docker_path}",
-  "graph": "${docker_path}",
   "hosts": ["unix:///var/run/docker.sock"],
   "log-driver": "json-file",
   "log-opts": {
@@ -454,13 +452,25 @@ check_docker() {
 
 
 check_docker_compose() {
-    echo -ne "docker-compose 检测 \t........................ "
+    log_info_inline "docker-compose 检测..."
 
     if ! cmd_exists docker-compose; then
-        log_step_error "[ERROR] 未安装 docker-compose"
+        log_step_error "未安装"
         return 1
     fi
 
     log_ok
     return 0
+}
+
+load_images() {
+  print_subtitle "加载 Docker 镜像..."
+  local docker_images_folder="${1:-../../docker-images}"
+  systemctl restart docker
+  for docker_image in ${docker_images_folder}/*; do
+    temp_file=$(basename $docker_image)
+    log_info_inline "${temp_file} "
+    docker load -q -i ${docker_images_folder}/$temp_file
+    log_ok
+  done
 }

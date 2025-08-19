@@ -35,6 +35,7 @@ redis.password={{ .CE_REDIS_PASSWORD | required }}
 redis.sentinel.nodes={{ .CE_REDIS_HOST | required }}
 redis.password={{ .CE_REDIS_PASSWORD | required }}
 redis.database={{ .CE_REDIS_DATABASE | required }}
+redis.sentinel.master={{ .CE_REDIS_MASTER | required }}
 {{- end }}
 
 #InfluxDB
@@ -133,3 +134,5 @@ management.endpoint.info.enabled=true
 
 # Synchronize cloud accounts every two hours
 sync.cloud.account=0 0 0/2 * * ?
+
+fit2cloud.cmp.address={{ .CE_ACCESS_IP | required }}

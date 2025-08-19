@@ -19,6 +19,7 @@ source "$BASE_DIR/scripts/os.sh"
 
 SYSTEM_NAME="FIT2CLOUD 云管平台 3.0"
 VERSION_INFO=`cat ../fit2cloud/conf/version`
+SYSTEM_IPS=$(get_system_ip)
 
 # 显示帮助信息
 show_help() {
@@ -141,13 +142,11 @@ check_installer_path() {
     if [[ -z "$ce_tmp_path" ]]; then
         echo "使用默认安装路径: $installer_path/fit2cloud"
     else
-        installer_path="$ce_path"
+        installer_path="$ce_tmp_path"
         echo "使用自定义安装路径: $installer_path/fit2cloud"
 
         # 如果路径不存在，直接退出
-        if [[ ! -d "$installer_path" ]]; then
-          mkdir -p $installer_path
-        fi
+        mkdir -p $installer_path
 
         # 设置新的安装路径到 .env 文件中
         set_env_value CE_INSTALL_PATH $installer_path
@@ -155,12 +154,7 @@ check_installer_path() {
 }
 
 check_installer_minio() {
-    read -p "是否安装 MinIO 服务器? [y/n](默认y): " choice
-    if [[ "$choice" =~ ^[Nn]$ ]]; then
-      configure_external_minio
-    else
-      configure_local_minio
-    fi
+    install_minio
 }
 
 # 检查环境
@@ -171,33 +165,195 @@ check_prerequisites() {
     check_installer_minio
 }
 
-check_system_requirements() {
+pre_install_check() {
+    print_title "$SYSTEM_NAME 安装环境检测"
+
+    local checks=(
+        check_root_user
+        check_os_version
+        check_architecture
+        check_cpu
+        check_memory
+    )
+
+    for check in "${checks[@]}"; do
+        if ! $check; then
+            VALIDATION_PASSED=0
+        fi
+    done
+
+    # 磁盘空间检测需要安装路径
+    check_disk_space "$installer_path"
+
+    # Docker环境检测
+    if ! check_docker; then
+        VALIDATION_PASSED=0
+    fi
+
+    # 端口检测
+    check_required_ports
+
+    # 检测结果处理
+    if [[ $VALIDATION_PASSED -eq 0 ]]; then
+        print_color $COLOR_RED "\n${SYSTEM_NAME} 安装环境检测未通过，请查阅上述环境检测结果\n"
+        exit 1
+    fi
+
+    if [[ $VALIDATION_WARNING -eq 0 ]]; then
+        echo
+        read -p "${SYSTEM_NAME} 安装环境检测异常，机器配置建议不能低于 4C 16G 200G。是否跳过? [y/n](默认y): " skip_warning
+        if [[ ${skip_warning:-y} == "n" ]]; then
+            print_color $COLOR_RED "\n${SYSTEM_NAME} 安装环境检测未通过\n"
+            exit 1
+        fi
+    fi
+}
+
+pre_install_check() {
     print_subtitle "检查系统要求..."
-    # 遍历所有检测函数
-    for fn in check_root check_os check_arch check_cpu check_memory check_disk check_docker; do
+
+    for fn in check_root check_os check_arch check_docker; do
         $fn || exit_code=1
     done
 
-    # 最终判断
+    for fn in check_cpu check_memory check_disk; do
+        $fn || skip_warning_code=1
+    done
+
     if [ $exit_code -ne 0 ]; then
         log_error "${SYSTEM_NAME} 安装环境检测未通过，请查阅上述环境检测结果"
         exit 1
-    else
-        log_success "${SYSTEM_NAME} 安装环境检测已通过，可以开始安装"
     fi
+
+    if [ $skip_warning_code -ne 0 ]; then
+        read -p "${SYSTEM_NAME} 安装环境检测异常，机器配置建议不能低于 4C 16G 200G。是否跳过? [y/n](默认y): " skip_warning
+        if [[ ${skip_warning:-y} == "n" ]]; then
+            log_error "${SYSTEM_NAME} 安装环境检测未通过，请查阅上述环境检测结果"
+            exit 1
+        fi
+        exit 1
+    fi
+
+    log_success "${SYSTEM_NAME} 安装环境检测已通过，可以开始安装"
+}
+
+# 开放端口
+open_cmp_port() {
+  local ce_access_port=$(get_env_value CE_ACCESS_PORT)
+  open_port $ce_access_port
+}
+
+# 配置 CMP
+config_cmp() {
+    printTitle "配置 FIT2CLOUD 服务"
+
+    # 开放端口
+    open_cmp_port
+
+    local installer_path=$(get_env_value CE_INSTALL_PATH)
+
+    # 配置服务
+    log_info_inline "配置服务"
+    cp -rp ../fit2cloud $installer_path
+    rm -rf $installer_path/fit2cloud/bin/fit2cloud
+    chmod -R 777 $installer_path/fit2cloud/data
+    chmod -R 777 $installer_path/fit2cloud/git
+    chmod -R 777 $installer_path/fit2cloud/sftp
+    chmod -R 777 $installer_path/fit2cloud/conf/rabbitmq
+    chmod -R 777 $installer_path/fit2cloud/logs/rabbitmq
+    chmod 644 $installer_path/fit2cloud/conf/my.cnf
+    \cp fit2cloud.service /etc/init.d/fit2cloud
+    chmod a+x /etc/init.d/fit2cloud
+    \cp f2cctl /usr/bin/f2cctl
+    chmod a+x /usr/bin/f2cctl
+    log_ok
+
+    log_info_inline "开机自启"
+    os=$(get_os)
+    os_version=$(get_os_version)
+
+    # 开机自启
+    if [[ $os_version == 7 || $os == "kylin" ]]; then
+        chkconfig --add fit2cloud
+        fit2cloud_service=$(grep "service fit2cloud start" /etc/rc.d/rc.local | wc -l)
+        if [[ "$fit2cloud_service" -eq 0 ]]; then
+            echo "sleep 10" >> /etc/rc.d/rc.local
+            echo "service fit2cloud start" >> /etc/rc.d/rc.local
+        fi
+        chmod +x /etc/rc.d/rc.local
+    log_ok
+    elif [[ $os_version == 20 || $os_version == 22 || $os_version == 24 ]]; then
+        if [[ -f /etc/init.d/fit2cloud ]]; then
+            chmod +x /etc/init.d/fit2cloud
+        else
+            log_step_error "/etc/init.d/fit2cloud script not found."
+            exit 1
+        fi
+        log_ok
+    else
+        log_step_success "跳过"
+    fi
+
+    log_info_inline "重启 Docker"
+    systemctl restart docker
+    log_ok
+}
+
+# 配置访问地址
+config_cmp_address() {
+    printTitle "配置云管服务器的访问地址"
+
+    # 查询结果转数组
+    nums=($SYSTEM_IPS)
+    ip_addr="${nums[0]}"
+
+    if [ ${#nums[@]} -gt 1 ]; then
+        # 多个网卡 IP
+        echo -e "存在多个网卡 IP："
+        for i in "${nums[@]}"; do
+            echo "    $i"
+        done
+        read -p "将自动设置云管访问地址为：${nums[0]}；是否修改？(y/n) " be_sure
+        if [[ "$be_sure" == "y" ]]; then
+            read -p "请输入云管访问地址，按 Enter 确认：" ip_addr
+            ip_addr=$(clean_address "${ip_addr:-${nums[0]}}")
+        fi
+    elif [ ${#nums[@]} -eq 1 ]; then
+        # 只有一个网卡 IP
+        ip_addr="${nums[0]}"
+        echo "    http://$ip_addr"
+    else
+        # 没有网卡 IP
+        echo "没有查询到网卡 IP，请输入一个云管访问地址的 IP 或域名（可留空）。"
+        read -p "之后可在【管理中心-系统设置-系统参数】维护，按 Enter 确认：" ip_addr
+        ip_addr=$(clean_address "$ip_addr")
+        [ -n "$ip_addr" ] && echo "    http://$ip_addr"
+    fi
+
+    # 写入配置文件（即使 ipAddr 为空也写，方便后续修改）
+    write_config "$ip_addr"
+
+    # 数据采集配置文件需要配置当前宿主机真实 IP（如需启用可解开注释）
+    # sed -i "s@tcp://localip:2375@tcp://$ip_addr:2375@g" "$installerPath/fit2cloud/conf/telegraf.conf"
+
+    echo "配置已写入，可在【管理中心-系统设置-系统参数】中搜索 fit2cloud.cmp.address 进行管理。"
+    echo "配置云管服务器的访问地址结束。"
 }
 
 install() {
   # 安装 docker
   install_docker
-
-  #
-
+  # 加载镜像
+  load_images
+  # 配置服务
+  config_cmp
+  # 配置服务
+  config_cmp_address
 }
 
 
 # 输出
-echo_fit2cloud() {
+show_welcome() {
 echo
 cat << EOF
 ███████╗██╗████████╗██████╗  ██████╗██╗      ██████╗ ██╗   ██╗██████╗
@@ -216,15 +372,11 @@ main() {
     # 解析参数
     parse_args "$@"
 
-    print_title "开始打包 Fit2Cloud 2.0..."
-
-    # 检查前置条件
+    show_welcome
+    # 检查系统
+    pre_install_check
+    # 配置
     check_prerequisites
-
-    echo_fit2cloud
-
-    # 检查系统要求
-    check_system_requirements
 
     install
 }

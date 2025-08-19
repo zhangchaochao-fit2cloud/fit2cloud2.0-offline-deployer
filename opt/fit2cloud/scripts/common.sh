@@ -233,38 +233,6 @@ download_file() {
 # Docker 相关函数
 # =============================================================================
 
-# 检查 Docker 是否安装
-docker_check() {
-    log_info "检查 Docker 环境..."
-    
-    if ! command -v docker &> /dev/null; then
-        log_error "Docker 未安装，请先安装 Docker"
-        return 1
-    fi
-    
-    local docker_version=$(docker info | grep 'Server Version' | awk -F: '{print $2}' | awk -F. '{print $1}')
-    if [[ "$docker_version" -lt "18" ]]; then
-        log_error "Docker 版本需要 18 以上，当前版本: $docker_version"
-        return 1
-    fi
-    
-    log_info "Docker 版本检查通过: $docker_version"
-    return 0
-}
-
-# 检查 docker-compose 是否安装
-docker_compose_check() {
-    log_info "检查 docker-compose 环境..."
-    
-    if ! command -v docker-compose &> /dev/null; then
-        log_error "docker-compose 未安装，请先安装 docker-compose"
-        return 1
-    fi
-    
-    log_info "docker-compose 检查通过"
-    return 0
-}
-
 # 启动 Docker 服务
 docker_start() {
     log_info "启动 Docker 服务..."
@@ -375,27 +343,6 @@ check_port_with_result() {
 # 系统检测函数
 # =============================================================================
 
-# 检测操作系统
-detect_os() {
-    if [[ "$(uname)" == "Darwin" ]]; then
-        local arch=$(uname -m)
-        if [[ "$arch" == "arm64" ]]; then
-            echo "mac_arm64"
-        else
-            echo "mac_intel"
-        fi
-    elif [[ "$(uname)" == "Linux" ]]; then
-        local arch=$(uname -m)
-        if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
-            echo "linux_arm64"
-        else
-            echo "linux_x64"
-        fi
-    else
-        echo "unknown"
-    fi
-}
-
 # 获取本机IP地址
 get_local_ip() {
     ip route get 1 | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p'
@@ -404,29 +351,6 @@ get_local_ip() {
 # 获取所有网卡IP
 get_all_ips() {
     ip route get 1 | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p' | tr '\n' ' '
-}
-
-# =============================================================================
-# 文件操作函数
-# =============================================================================
-
-# 安全创建目录
-safe_mkdir() {
-    local dir_path=$1
-    if [[ ! -d "$dir_path" ]]; then
-        mkdir -p "$dir_path"
-        log_info "创建目录: $dir_path"
-    fi
-}
-
-# 备份文件
-backup_file() {
-    local file_path=$1
-    if [[ -f "$file_path" ]]; then
-        local backup_path="${file_path}.backup.$(date +%Y%m%d_%H%M%S)"
-        cp "$file_path" "$backup_path"
-        log_info "备份文件: $file_path -> $backup_path"
-    fi
 }
 
 # =============================================================================
@@ -569,29 +493,6 @@ generate_config() {
     fi
 }
 
-# =============================================================================
-# 验证函数
-# =============================================================================
-
-# 验证必需的命令
-check_required_commands() {
-    local commands="$@"
-    local missing_commands=""
-    
-    for cmd in $commands; do
-        if ! command -v "$cmd" &> /dev/null; then
-            missing_commands="$missing_commands $cmd"
-        fi
-    done
-    
-    if [[ -n "$missing_commands" ]]; then
-        log_error "缺少必需的命令: $missing_commands"
-        return 1
-    fi
-    
-    return 0
-}
-
 # 验证文件是否存在
 check_required_files() {
     local files="$@"
@@ -610,40 +511,3 @@ check_required_files() {
     
     return 0
 }
-
-# =============================================================================
-# 初始化函数
-# =============================================================================
-
-# 初始化环境
-init_environment() {
-    log_info "初始化 Fit2Cloud 2.0 环境..."
-    
-    # 设置错误处理
-    set -e
-    
-    # 检查必需的命令
-    check_required_commands "docker" "docker-compose" "curl" "wget" || {
-        log_error "环境检查失败，请安装必需的工具"
-        exit 1
-    }
-    
-    # 启动 Docker 服务
-    docker_start
-    
-    log_info "环境初始化完成"
-}
-
-# 导出所有函数
-export -f log_info log_warn log_error log_debug print_title print_subtitle
-export -f get_env check_required_env export_env_to_file
-export -f docker_check docker_compose_check docker_start docker_run docker_compose_up docker_check_health
-export -f check_port check_port_with_result
-export -f detect_os get_local_ip get_all_ips
-export -f safe_mkdir backup_file
-export -f open_firewall_port
-export -f start_service check_service_status
-export -f check_mysql_connection check_redis_connection
-export -f generate_config
-export -f check_required_commands check_required_files
-export -f init_environment 

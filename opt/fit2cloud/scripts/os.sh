@@ -82,35 +82,75 @@ check_root(){
 
 # 操作系统检测
 get_os_version() {
-
-
+    major_version="unknown"
+    if [[ $os == "redhat" ]]; then
+        version=$(cat /etc/redhat-release | grep -oE '[0-9]+\.[0-9]+')
+        major_version=$(echo $osVersion | awk -F. '{print $1}')
+    elif [[ $os == "ubuntu" || $os == "openEuler" ]]; then
+        source /etc/os-release
+        version=$VERSION_ID
+        major_version=$(echo $osVersion | awk -F. '{print $1}')
+    elif [[ $os == "kylin" ]]; then
+        source /etc/os-release
+        major_version=$VERSION_ID
+    elif [[ ! $os == "unknown" ]]; then
+        source /etc/os-release
+        major_version=$VERSION_ID
+    fi
+    echo $version
 }
+
+# 操作系统检测
+get_os() {
+    version="unknown"
+    if [[ -f /etc/redhat-release ]]; then
+        version="redhat"
+    elif [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        case "$ID" in
+            ubuntu)
+                version="ubuntu"
+                ;;
+            openEuler)
+                echo "openEuler"
+                return
+                ;;
+            kylin)
+                echo "kylin"
+                ;;
+            *)
+                echo "$ID"
+                ;;
+        esac
+    fi
+
+    echo $version
+}
+
 # 操作系统检测
 check_os() {
     local record=0
     log_info_inline "操作系统检测..."
 
+    os=$(get_os)
+    version=$(get_os_version)
+
     local supported=false
 
-    if [[ -f /etc/redhat-release ]]; then
+    if [[ $os == "redhat" ]]; then
         os_info=$(cat /etc/redhat-release)
         if [[ $os_info =~ CentOS\ ([7-8])\.* ]] || [[ $os_info =~ RHEL\ ([7-8])\.* ]]; then
             supported=true
         fi
-    elif [[ -f /etc/os-release ]]; then
-        source /etc/os-release
-        case "$ID" in
-            ubuntu)
-                [[ $VERSION_ID =~ ^(20|22|24)\. ]] && supported=true
-                ;;
-            openEuler)
-                [[ $VERSION_ID =~ ^(22|23)\. ]] && supported=true
-                ;;
-            *)
-                supported=false
-                ;;
-        esac
-    elif [[ -f /etc/kylin-release ]]; then
+    elif [[ $os == "ubuntu" ]]; then
+        if [[ $version  =~ ^(20|22|24)\. ]]; then
+            supported=true
+        fi
+    elif [[ $os == "openEuler" ]]; then
+        if [[ $version =~ ^(22|23)\. ]]; then
+            supported=true
+        fi
+    elif [[ $os == "kylin" ]]; then
         supported=true
     fi
 
