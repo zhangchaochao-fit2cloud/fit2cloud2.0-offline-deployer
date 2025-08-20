@@ -91,7 +91,7 @@ pull_docker_images() {
 
     # 拉取镜像
     for image_name in ${compose_images}; do
-        tag_name=$(echo "${image_name}" | awk -F "/" '{print $3}')
+        tag_name=$(echo "${image_name}" | awk -F "/" '{print $NF}')
         log_info_inline "${tag_name}"
         if [[ "$DRY_RUN" != "true" ]]; then
 #            output=$(docker pull --platform="linux/${platform}" "${image_name}" 2>&1 >/dev/null)
@@ -202,10 +202,11 @@ download_docker() {
         exit 1
     fi
 
-#    if [[ "$DRY_RUN" == "true" ]]; then
-#      log_step_success "跳过"
-#      return
-#    fi
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log_info_inline "下载Docker安装包"
+      log_step_success "跳过"
+      return
+    fi
 
     # 本地 docker 目录没有配置，默认从远程获取
     if [[ -d "${FROM_DOCKER_LOCAL_DIR}" ]];then
