@@ -217,8 +217,12 @@ download_file() {
         else
             if cmd_exists curl; then
                 echo "Downloading $output ..."
-                curl -L -o "$output" --progress-bar --write-out "%{http_code}" "$url" | tr -d '\n'
-                echo "Download finished"
+                if curl -L --progress-bar -o "$output" "$url"; then
+                    echo "Download finished"
+                else
+                    echo "Download failed: $url"
+                    exit 1
+                fi
             else
                 wget --quiet --progress=bar:force -O "$output" "$url"
             fi
