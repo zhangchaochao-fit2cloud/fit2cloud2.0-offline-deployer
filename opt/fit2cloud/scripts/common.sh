@@ -16,24 +16,9 @@ NC=$'\033[0m' # No Color
 # 日志输出函数
 # =============================================================================
 
-#SPINNER_RUNNING=true
-
-#show_dots_spinner() {
-#    local msg="$1"
-#    local delay=0.5
-#    local dots=""
-#    local i=0
-#
-#    while $SPINNER_RUNNING; do
-#        dots=$(printf "%*s" $((i % 4)) "" | tr ' ' '.')
-#        echo -ne "\r${msg}${dots}   "  # 清除残留字符
-#        sleep "$delay"
-#        ((i++))
-#    done
-#}
-
 
 function get_padding {
+    export LC_ALL=en_US.UTF-8
     local msg=$1
     local total_width=70
     # 非中文数量
@@ -50,15 +35,20 @@ log_info_inline() {
     local msg="$1"
     msg_length=${#msg}
 
-    get_padding $msg
+    get_padding "$msg"
     echo -ne "${GREEN}[INFO] ${NC} $1 $padding"
 }
 
 log_step_info() {
     echo -e "${GREEN}$1${NC}"
 }
+
 log_info() {
     echo -e "${GREEN}[INFO] ${NC}$1"
+}
+
+log_title_info() {
+    echo -e "${GREEN}【$1】${NC}\n"
 }
 
 #log_warn_inline() {
@@ -74,9 +64,9 @@ log_warn() {
 }
 
 log_step_error() {
-    echo "$RED" | od -a
     echo -e "${RED}$1${NC}"
 }
+
 log_error() {
     echo -e "${RED}[ERROR] ${NC} $1"
 }
@@ -134,32 +124,37 @@ get_env() {
 
 # 读取配置变量
 get_env_value() {
-  # 脚本目录
-  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local key="$1"
-  # env 环境变量文件
-  local env_file="${2:-$script_dir/../.env}"
+    # 脚本目录
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local key="$1"
+    local default_value="$2"
+    # env 环境变量文件
+    local env_file="${3:-$script_dir/../.env}"
 
-  # 使用 grep 和 shell 字符串处理提取变量值（忽略注释和空行）
-  local value
-  value=$(grep -E "^$key=" "$env_file" | grep -v '^#' | head -n 1 | cut -d'=' -f2-)
+    # 使用 grep 和 shell 字符串处理提取变量值（忽略注释和空行）
+    local value
+    value=$(grep -E "^$key=" "$env_file" | grep -v '^#' | head -n 1 | cut -d'=' -f2-)
 
-  echo "$value"
+    if [[ -n "$value" ]]; then
+      echo "$value"
+    else
+      echo "$default_value"
+    fi
 }
 
 # 修改配置变量
 set_env_value() {
-  # 脚本目录
-  local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local key="$1"
-  local new_value="$2"
-  local env_file="${3:-$script_dir/../.env}"
+    # 脚本目录
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local key="$1"
+    local new_value="$2"
+    local env_file="${3:-$script_dir/../.env}"
 
-  if grep -qE "^${key}=" "$file"; then
-    sed -i.bak -E "s/^(${key}=).*/\1${new_value}/" "$env_file"
-  else
-    echo "${key}=${new_value}" >> "$env_file"
-  fi
+    if grep -qE "^${key}=" "$env_file"; then
+        sed -i.bak -E "s|^(${key}=).*|\1${new_value}|" "$env_file"
+    else
+        echo "${key}=${new_value}" >> "$env_file"
+    fi
 }
 
 # 检查必需的环境变量
@@ -180,6 +175,10 @@ export_env_to_file() {
     local var_value=$3
     echo "$var_name=$var_value" >> "$file_path"
 }
+
+# =============================================================================
+# 通用函数
+# =============================================================================
 
 # 检查命令是否存在
 cmd_exists() {
@@ -300,29 +299,48 @@ docker_check_health() {
 # 端口检测函数
 # =============================================================================
 
+# 验证文件是否存在
+check_number() {
+    local number="$1"
+    if [[ ! "$number" =~ ^[0-9]+$ ]]; then
+      return 1
+    fi
+
+    return 0
+}
+
 # 检查端口是否被占用
 check_port() {
     local port=$1
     local record=0
+    local not_found_tool=0
     
-    log_info "检查端口 $port 占用情况..."
+    log_info_inline "检查端口 $port 占用..."
+
+    if ! check_number $port; then
+        log_step_error "必须为数字"
+        return 1
+    fi
     
-    if command -v lsof &> /dev/null; then
+    if cmd_exists lsof; then
         record=$(lsof -i:$port | grep LISTEN | wc -l)
-    elif command -v netstat &> /dev/null; then
+    elif cmd_exists netstat; then
         record=$(netstat -nplt | awk -F' ' '{print $4}' | grep "^[[:graph:]]*:$port$" | wc -l)
-    elif command -v ss &> /dev/null; then
+    elif cmd_exists ss; then
         record=$(ss -nlt | awk -F' ' '{print $4}' | grep "^[[:graph:]]*:$port$" | wc -l)
     else
-        log_warn "未找到端口检测工具 (lsof/netstat/ss)，跳过端口检测"
-        return 0
+        not_found_tool=1
     fi
     
     if [[ "$record" -eq "0" ]]; then
-        log_info "端口 $port 可用"
+        if [[ "$not_found_tool" -eq "1" ]]; then
+            log_step_warn "未找到检测工具 (lsof/netstat/ss)，跳过端口检测"
+            return 0
+        fi
+        log_ok
         return 0
     else
-        log_error "端口 $port 已被占用"
+        log_step_error "已占用"
         return 1
     fi
 }
@@ -514,4 +532,19 @@ check_required_files() {
     fi
     
     return 0
+}
+
+read_with_default() {
+    local prompt="$1"
+    local default="$2"
+    local input
+
+    if [[ "$SILENT_MODE" == "true" ]]; then
+        # 静默模式直接返回默认值
+        echo "$prompt [$default]: " >&2
+        echo "$default"
+        return
+    fi
+    read -p "$prompt [$default]: " input
+    echo "${input:-$default}"
 }

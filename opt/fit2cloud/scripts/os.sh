@@ -23,7 +23,7 @@ open_port() {
     if ! systemctl status firewalld >/dev/null 2>&1; then
         return 0
     fi
-    log_info_inline "打开防火墙端口 $port ..."
+    log_info_inline "开放端口 $port ..."
     if ! firewall-cmd --list-all | grep -w ports | grep -w "$port" >/dev/null; then
         firewall-cmd --zone=public --add-port=${port}/tcp --permanent >/dev/null
         firewall-cmd --reload >/dev/null
@@ -70,7 +70,7 @@ check_service_port(){
 
 # root 用户检测
 check_root(){
-    print_subtitle "root 用户检测 ..."
+    log_info_inline "root 用户检测..."
     if [[ $EUID -eq 0 ]]; then
         log_ok
         return 0
@@ -83,13 +83,13 @@ check_root(){
 # 操作系统检测
 get_os_version() {
     major_version="unknown"
-    if [[ $os == "redhat" ]]; then
+    if [[ $os == "redhat" || $os == "centos" ]]; then
         version=$(cat /etc/redhat-release | grep -oE '[0-9]+\.[0-9]+')
-        major_version=$(echo $osVersion | awk -F. '{print $1}')
+        major_version=$(echo $version | awk -F. '{print $1}')
     elif [[ $os == "ubuntu" || $os == "openEuler" ]]; then
         source /etc/os-release
         version=$VERSION_ID
-        major_version=$(echo $osVersion | awk -F. '{print $1}')
+        major_version=$(echo $version | awk -F. '{print $1}')
     elif [[ $os == "kylin" ]]; then
         source /etc/os-release
         major_version=$VERSION_ID
@@ -97,34 +97,37 @@ get_os_version() {
         source /etc/os-release
         major_version=$VERSION_ID
     fi
-    echo $version
+    echo $major_version
 }
 
 # 操作系统检测
 get_os() {
-    version="unknown"
-    if [[ -f /etc/redhat-release ]]; then
-        version="redhat"
-    elif [[ -f /etc/os-release ]]; then
+    os="unknown"
+
+    if [[ -f /etc/os-release ]]; then
         source /etc/os-release
         case "$ID" in
             ubuntu)
-                version="ubuntu"
+                os="ubuntu"
                 ;;
             openEuler)
-                echo "openEuler"
-                return
+                os="openEuler"
                 ;;
             kylin)
-                echo "kylin"
+                os="kylin"
+                ;;
+            centos)
+                os="centos"
                 ;;
             *)
-                echo "$ID"
+                os="$ID"
                 ;;
         esac
+    elif [[ -f /etc/redhat-release ]]; then
+        os="redhat"
     fi
 
-    echo $version
+    echo $os
 }
 
 # 操作系统检测
@@ -137,17 +140,16 @@ check_os() {
 
     local supported=false
 
-    if [[ $os == "redhat" ]]; then
-        os_info=$(cat /etc/redhat-release)
-        if [[ $os_info =~ CentOS\ ([7-8])\.* ]] || [[ $os_info =~ RHEL\ ([7-8])\.* ]]; then
+    if [[ $os == "redhat" || $os == "centos" ]]; then
+        if [[ $version  =~ ^(7|8) ]]; then
             supported=true
         fi
     elif [[ $os == "ubuntu" ]]; then
-        if [[ $version  =~ ^(20|22|24)\. ]]; then
+        if [[ $version  =~ ^(20|22|24) ]]; then
             supported=true
         fi
     elif [[ $os == "openEuler" ]]; then
-        if [[ $version =~ ^(22|23)\. ]]; then
+        if [[ $version =~ ^(22|23) ]]; then
             supported=true
         fi
     elif [[ $os == "kylin" ]]; then
@@ -169,8 +171,8 @@ check_arch() {
     log_info_inline "服务器架构检测..."
     local arch=$(uname -m)
     if [[ $arch == "x86_64" ]] || [[ $arch == "aarch64" ]]; then
-        return 0
         log_ok
+        return 0
     else
         log_step_error "架构必须是 x86_64 或 aarch64"
         return 1
@@ -180,7 +182,7 @@ check_arch() {
 
 # CPU检测
 check_cpu() {
-    log_info_inline "CPU检测..."
+    log_info_inline "CPU 检测..."
     arch=$(uname -m)
     local cores=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo)
     if [[ $cores -lt 4 ]]; then

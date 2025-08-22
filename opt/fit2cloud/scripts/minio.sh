@@ -3,10 +3,15 @@
 # 脚本目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# 默认 data 目录
+DEFAULT_MINIO_DATA_DIR="$SCRIPT_DIR/../data/minio"
+
 source "$SCRIPT_DIR/common.sh"
 
 install_minio() {
-    read -p "是否安装 MinIO 服务器? [y/n](默认y): " choice
+    log_title_info "MinIO"
+    choice=$(read_with_default "1. 是否安装 MinIO 服务器? [y/n] " "y")
+    echo -e "${choice}\n"
     if [[ "$choice" =~ ^[Nn]$ ]]; then
       configure_external_minio
     else
@@ -31,39 +36,54 @@ configure_external_minio() {
 }
 
 configure_local_minio() {
-    set_env_value CE_EXTERNAL_MINIO false
-    local installer_path=$(get_env_value CE_INSTALL_PATH)
 
-    # 安装端口
+    local installer_path=$(get_env_value CE_MINIO_INSTALL_PATH "/opt/fit2cloud/data/minio")
+
     while true; do
-        read -p "MinIO 将使用默认安装路径$installer_path/fit2cloud，如需更改请输入自定义安装路径:" folder
-        if [ ! -n "$folder" ] ;then
-          echo "使用默认安装路径$installer_path/fit2cloud"
-          folder="$installer_path/fit2cloud"
-        else
-          echo "使用自定义安装路径$folder"
-        fi
-        read -p "MinIO 将使用默认访问端口 9001，如需更改请输入自定义端口: " port
-        port="${port:-9001}"
+        minio_folder=$(read_with_default "2. MinIO 安装路径" "${installer_path}")
+        echo -e "${minio_folder}\n"
 
-        if [[ ! "$port" =~ ^[0-9]+$ ]]; then
-          echo "自定义端口必须为纯数字，请重新输入。"
+        api_port=$(read_with_default "3. MinIO API端口" "9000")
+        echo -e "${api_port}\n"
+
+        web_port=$(read_with_default "4. MinIO 访问端口" "9001")
+        echo -e "${web_port}\n"
+
+        echo -e "5. MinIO 端口占用："
+        web_port="${web_port:-9001}"
+        if ! check_port "$api_port"; then
+          continue
+        fi
+        if ! check_port "$web_port"; then
           continue
         fi
 
-        echo "检测端口 $port 是否被占用..."
-        if check_port "$port"; then
-          echo "使用端口: $port"
-          break
-        else
-          echo "端口 $port 已被占用，请重新输入。"
+        # 最终确认
+        echo
+        sure=$(read_with_default "6. 确认 MinIO 安装路径: $minio_folder，端口: $api_port, $web_port ? [y/n]: " "y")
+        echo -e "${sure}\n"
+        if [[ "$sure" =~ ^[Nn]$ ]]; then
+          echo -e "已取消安装\n"
+          continue
         fi
+        break
     done
+    mkdir -p $minio_folder
 
-    # 最终确认
-    read -p "确认 MinIO 安装路径: $folder/MinIO，端口: $port? [y/n](默认y): " sure
-    if [[ "$sure" =~ ^[Nn]$ ]]; then
-      echo "已取消安装 MinIO。"
-      exit 0
+    # 自定义路径需要移动文件到该目录
+    if [ ! "$installer_path" == "$minio_folder" ]; then
+        cp -rp "$DEFAULT_MINIO_DATA_DIR/*" $minio_folder
     fi
+
+    set_env_value CE_EXTERNAL_MINIO false
+    set_env_value CE_MINIO_INSTALL_PATH $minio_folder
+    set_env_value CE_MINIO_API_PORT $api_port
+    set_env_value CE_MINIO_WEB_PORT $web_port
+
+    local access_ip=$(get_env_value CE_ACCESS_IP)
+    set_env_value CE_MINIO_ENDPOINT "http://$access_ip:$api_port"
+    set_env_value CE_MINIO_ACCESS_KEY "gzD4Mt5YSA1KQr1XnxSZ"
+    set_env_value CE_MINIO_SECRET_KEY "JQ1z9O5rcGZx1xsUjpadaRy0jQKdB56lGs3vDbEX"
+    set_env_value CE_MINIO_DEFAULT_BUCKET "default"
+
 }

@@ -2,41 +2,50 @@
 # chkconfig: 2345 10 90
 # description: fit2cloud service
 
+# 避免操作系统没有加载 /usr/local/bin 下面的环境变量，导致 docker-compose 找不到命令
+export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+
 action=${1-}
 target=${2-}
 mode=${3-}
 
-f2c_install_dir="/opt"
-extension_dir="${f2c_install_dir}/fit2cloud/extensions"
-log_dir="${f2c_install_dir}/fit2cloud/logs"
-docker_compose_file_args="-f ${f2c_install_dir}/fit2cloud/docker-compose.yml"
-env_file="${f2c_install_dir}/fit2cloud/.env"
-source $env_file
+# 安装地址
+F2C_INSTALL_DIR="/opt"
+# 扩展包目录
+EXTENSION_DIR="${F2C_INSTALL_DIR}/fit2cloud/extensions"
+# 日志目录
+LOG_DIR="${F2C_INSTALL_DIR}/fit2cloud/logs"
+# compose 配置文件参数
+DOCKER_COMPOSE_FILE_ARGS="-f ${F2C_INSTALL_DIR}/fit2cloud/docker-compose.yml"
+# 环境变量文件
+ENV_FILE="${F2C_INSTALL_DIR}/fit2cloud/.env"
+
+source $ENV_FILE
 if [ "1${CE_MODE}" == "1ha" ]; then
-    docker_compose_file_args="--env-file ${env_file} -f ${f2c_install_dir}/fit2cloud/external-compose/ha-docker-compose.yml"
+    DOCKER_COMPOSE_FILE_ARGS="--env-file ${ENV_FILE} -f ${F2C_INSTALL_DIR}/fit2cloud/external-compose/ha-docker-compose.yml"
 fi
 
-if [ -d $extension_dir ]; then
-    for extension in $(ls $extension_dir); do
-        current_extension_dir="$extension_dir/$extension"
-        if [ ! -d $current_extension_dir ]; then
+if [ -d $EXTENSION_DIR ]; then
+    for extension in $(ls $EXTENSION_DIR); do
+        CURRENT_EXTENSION_DIR="$EXTENSION_DIR/$extension"
+        if [ ! -d $current_EXTENSION_DIR ]; then
             continue
         fi
 
-        for extension_file_name in $(ls $current_extension_dir); do
-            extension_file="$current_extension_dir/$extension_file_name"
+        for extension_file_name in $(ls $CURRENT_EXTENSION_DIR); do
+            extension_file="$CURRENT_EXTENSION_DIR/$extension_file_name"
             if [ ! -f $extension_file ]; then
                 continue
             fi
 
             if [ "$extension_file_name" == "docker-compose.yml" ]; then
-                docker_compose_file_args="$docker_compose_file_args -f $extension_file"
+                DOCKER_COMPOSE_FILE_ARGS="$DOCKER_COMPOSE_FILE_ARGS -f $extension_file"
             fi
         done
     done
 fi
 
-EXE="docker-compose $docker_compose_file_args"
+EXE="docker-compose $DOCKER_COMPOSE_FILE_ARGS"
 
 options=$(getopt -o w: -l wait-time: -- "$@")
 eval set -- "$options"
@@ -392,13 +401,13 @@ function cleanLog
     case "$choice" in
         1)
             # 删除所有日志
-            find "${log_dir}" -maxdepth 2 -type d -name "history" -exec rm -rf {} +
+            find "${LOG_DIR}" -maxdepth 2 -type d -name "history" -exec rm -rf {} +
             echo "所有日志目录已删除。"
             ;;
         2)
             # 保留最近7天的日志
             echo "正在删除7天前的日志..."
-            find "${log_dir}" -maxdepth 2 -type d -name "history" | while read dir; do
+            find "${LOG_DIR}" -maxdepth 2 -type d -name "history" | while read dir; do
                 find "$dir" -type f -name "*.log" -mtime +7 -exec ls {} \;
             done
             echo "7天前的日志已删除。"

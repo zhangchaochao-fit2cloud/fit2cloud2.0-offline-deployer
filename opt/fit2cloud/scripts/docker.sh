@@ -33,12 +33,20 @@ get_docker_compose_args() {
         compose_args="$compose_args -f $EXT_COMPOSE_DIR/ha-docker-compose.yml"
     else
         compose_args="$compose_args -f $EXT_COMPOSE_DIR/base-docker-compose.yml"
-        for middleware in $(ls $middleware_dir); do
+        for middleware in $(ls "$middleware_dir"); do
             middleware_compose="$middleware_dir/$middleware"
-            if [ ! -f $middleware_compose ]; then
-                continue
+            [ ! -f "$middleware_compose" ] && continue
+#            compose_args="$compose_args -f $middleware_compose"
+             # 根据环境变量来判断，是否关联中间件的 compose
+            local service_name
+            service_name=$(basename $middleware_compose | cut -d '-' -f1 | tr 'a-z' 'A-Z')
+
+            # 只在 CE_EXTERNAL_SERVICE 为空或非 true/1 时才拼接
+            local env_var="CE_EXTERNAL_${service_name}"
+            local value="${!env_var}"
+            if [[ -z "$value" || "$value" != "true" && "$value" != "1" ]]; then
+                compose_args="$compose_args -f $middleware_compose"
             fi
-            compose_args="$compose_args -f $middleware_compose"
         done
     fi
 
@@ -75,9 +83,9 @@ get_all_ports() {
     local exe=$(get_docker_compose_exe)
 
     # 获取镜像列表
-    local image_names=$($exe config | grep -A 1 "ports:$" | grep "\-.*:" | awk -F":" '{print $1}' | awk -F" " '{print $2}')
+    local ports=$($exe config | grep 'published' | grep -o '[0-9]\+')
 
-    echo $image_names
+    echo $ports
 }
 
 # 拉取 Docker 镜像
@@ -219,22 +227,38 @@ download_docker() {
 
      # 解压
     cd ${docker_tools_dir}
-    unzip "${docker_package}"
+    unzip -q "${docker_package}"
     rm -rf "${docker_package}"
     rm -rf __MACOSX
 
-    # redhat 版本
-    cp -f ${docker_tools_dir}/docker-rhel8.tar.gz ${TOOLS_DIR}/docker/docker-rhel8.tar.gz
-    tar -zxvf docker-rhel8.tar.gz
-    rm -rf docker-rhel8.tar.gz
-
     # 回到上次的目录
-    cd -
+    cd - > /dev/null
 }
 
 # 获取 Docker 存储目录
 get_docker_dir() {
     docker info --format '{{.DockerRootDir}}' 2>/dev/null
+}
+
+# 启动 Docker 服务
+docker_is_start() {
+    if systemctl is-active --quiet docker; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 启动 Docker 服务
+docker_start() {
+    log_info_inline "启动 Docker 服务..."
+    if docker_is_start; then
+        log_info "已运行"
+    else
+        systemctl start docker > /dev/null
+        systemctl enable docker > /dev/null
+        log_ok
+    fi
 }
 
 # Docker 检测
@@ -243,7 +267,11 @@ check_docker() {
     if ! cmd_exists docker; then
         log_step_error "未安装"
         return 1
+    else
+        log_ok
     fi
+    docker_start
+    log_info_inline "Docker 版本检测..."
     docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null | cut -d. -f1)
     if [[ -z $version ]] || [[ $version -lt 18 ]]; then
         log_step_error "Docker 版本需要 18 以上"
@@ -448,7 +476,7 @@ check_docker() {
     fi
 
     local docker_dir=$(get_docker_dir)
-    log_step_success "存储目录：$dockerDir，请确保目录空间充足"
+    log_step_success "存储目录：$docker_dir，请确保目录空间充足"
 }
 
 
@@ -471,7 +499,7 @@ load_images() {
   for docker_image in ${docker_images_folder}/*; do
     temp_file=$(basename $docker_image)
     log_info_inline "${temp_file} "
-    docker load -q -i ${docker_images_folder}/$temp_file
+    docker load -q -i ${docker_images_folder}/$temp_file > /dev/null
     log_ok
   done
 }

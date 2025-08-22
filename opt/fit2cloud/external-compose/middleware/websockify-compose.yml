@@ -1,6 +1,6 @@
 services:
   websockify:
-    image: registry.fit2cloud.com/north/websockify:latest
+    image: ${IMAGE_ADDRESS}/websockify:latest
     container_name: websockify
     ports:
       - "0.0.0.0:6080:6080"

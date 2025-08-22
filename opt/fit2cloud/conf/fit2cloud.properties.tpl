@@ -135,4 +135,4 @@ management.endpoint.info.enabled=true
 # Synchronize cloud accounts every two hours
 sync.cloud.account=0 0 0/2 * * ?
 
-fit2cloud.cmp.address={{ .CE_ACCESS_IP | required }}
+fit2cloud.cmp.address={{ .CE_ACCESS_PROTOCOL | default "http" }}://{{ .CE_ACCESS_IP | required }}

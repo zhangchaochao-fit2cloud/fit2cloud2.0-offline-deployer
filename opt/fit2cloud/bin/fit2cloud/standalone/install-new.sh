@@ -7,19 +7,30 @@
 # 版本: 3.0
 # 描述: 自动化安装 FIT2CLOUD 云管平台的离线部署脚本
 #================================================================
+# set -ex
 
 # 获取脚本所在目录
 readonly BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly INSTALL_LOG="/tmp/fit2cloud-install.log"
 
 # 引入工具函数库
-source "$BASE_DIR/scripts/common.sh"
-source "$BASE_DIR/scripts/os.sh"
+source "$BASE_DIR/../fit2cloud/scripts/common.sh"
+source "$BASE_DIR/../fit2cloud/scripts/os.sh"
+source "$BASE_DIR/../fit2cloud/scripts/minio.sh"
 
 
 SYSTEM_NAME="FIT2CLOUD 云管平台 3.0"
 VERSION_INFO=`cat ../fit2cloud/conf/version`
 SYSTEM_IPS=$(get_system_ip)
+
+# Docker 镜像目录
+DOCKER_IMAGE_DIR="$BASE_DIR/../docker-images"
+# 扩展包目录
+EXTENSIONS_DIR="$BASE_DIR/../extensions"
+
+# 操作系统
+OS=$(get_os)
+OS_VERSION=$(get_os_version)
 
 # 显示帮助信息
 show_help() {
@@ -133,84 +144,100 @@ parse_args() {
     done
 }
 
-check_installer_path() {
-    local installer_path=$(get_env_value CE_INSTALL_PATH)
-    # 读取用户输入
-    read -p "CloudExplorer 将安装到：${installer_path}/fit2cloud，如需更改请输入自定义路径，否则按回车继续: " ce_tmp_path
+# 配置访问地址
+config_cmp_address() {
 
-    # 如果用户没输入路径，则使用默认
-    if [[ -z "$ce_tmp_path" ]]; then
-        echo "使用默认安装路径: $installer_path/fit2cloud"
+    SYSTEM_IPS_NUM=($SYSTEM_IPS)
+    # 默认IP
+    default_ip_addr="${SYSTEM_IPS_NUM[0]}"
+
+    if [ ${#SYSTEM_IPS_NUM[@]} -gt 1 ]; then
+        choice_default_ip=$(read_with_default "2. 默认访问IP："${default_ip_addr}"，确认？[y/n] " "y")
+        echo -e "${choice_default_ip}\n"
+        if [[ "$choice_default_ip" =~ ^[Nn]$ ]]; then
+            echo -e "存在多个网卡 IP："
+            for i in "${nums[@]}"; do
+                echo "    $i"
+            done
+            read -p "请输入访问IP，按 Enter 确认：" ip_addr
+            if [[ $ip_addr == https://* ]]; then
+              ip_addr=${ip_addr: 8}
+            fi
+            if [[ $ip_addr == http://* ]]; then
+              ip_addr=${ip_addr: 7}
+            fi
+
+            #如果未输入则取第一个
+            if [ -z "$ip_addr" ]; then
+              ip_addr=${SYSTEM_IPS_NUM[0]}
+            fi
+        else
+            ip_addr=$choice_default_ip
+        fi
+        echo -e "服务访问IP: $ip_addr\n"
+    elif [ ${#SYSTEM_IPS_NUM[@]} -eq 1 ]; then
+        ip_addr=$default_ip_addr
+        echo -e "2. 服务访问IP: $ip_addr\n"
     else
-        installer_path="$ce_tmp_path"
-        echo "使用自定义安装路径: $installer_path/fit2cloud"
-
-        # 如果路径不存在，直接退出
-        mkdir -p $installer_path
-
-        # 设置新的安装路径到 .env 文件中
-        set_env_value CE_INSTALL_PATH $installer_path
+        read -p "没有查询到网卡 IP，请输入一个云管访问地址的 IP 或域名（可留空）：" ip_addr
+        echo -e "2. 服务访问IP: $ip_addr\n"
     fi
+
+    set_env_value CE_ACCESS_IP "$ip_addr"
+
+    choice_default_protocol=$(read_with_default "3. 默认访问协议：http，确认？[y/n] " "y")
+    echo -e "${choice_default_protocol}\n"
+
+    if [[ "$choice_default_protocol" =~ ^[Nn]$ ]]; then
+        access_protocol="https"
+    else
+        access_protocol="http"
+    fi
+
+    set_env_value CE_ACCESS_PROTOCOL "$access_protocol"
+
+    echo -e "后续可在【管理中心-系统设置-系统参数】中搜索 fit2cloud.cmp.address 对访问地址进行管理\n"
 }
 
-check_installer_minio() {
+# 配置安装路径
+config_installer_path() {
+    log_title_info "CloudExplorer"
+    local installer_path=$(get_env_value CE_INSTALL_PATH)
+    # 读取用户输入
+    ce_tmp_path=$(read_with_default "1. 安装路径" "${installer_path}")
+    echo -e "安装路径: $ce_tmp_path/fit2cloud\n"
+    # 修改 fit2cloud.service 安装目录
+    sed -i 's#^f2c_install_dir=".*"#f2c_install_dir="'"$ce_tmp_path"'"#g' fit2cloud.service
+
+    installer_path=$ce_tmp_path
+    mkdir -p $installer_path
+
+    # 设置新的安装路径到 .env 文件中
+    set_env_value CE_INSTALL_PATH $installer_path
+
+    # 配置服务
+    config_cmp_address
+}
+
+# 配置 MinIO
+config_installer_minio() {
     install_minio
 }
 
 # 检查环境
 check_prerequisites() {
+    print_subtitle "安装配置向导..."
     # 检查安装路径
-    check_installer_path
+    config_installer_path
     # 安装 MinIO
-    check_installer_minio
-}
-
-pre_install_check() {
-    print_title "$SYSTEM_NAME 安装环境检测"
-
-    local checks=(
-        check_root_user
-        check_os_version
-        check_architecture
-        check_cpu
-        check_memory
-    )
-
-    for check in "${checks[@]}"; do
-        if ! $check; then
-            VALIDATION_PASSED=0
-        fi
-    done
-
-    # 磁盘空间检测需要安装路径
-    check_disk_space "$installer_path"
-
-    # Docker环境检测
-    if ! check_docker; then
-        VALIDATION_PASSED=0
-    fi
-
-    # 端口检测
-    check_required_ports
-
-    # 检测结果处理
-    if [[ $VALIDATION_PASSED -eq 0 ]]; then
-        print_color $COLOR_RED "\n${SYSTEM_NAME} 安装环境检测未通过，请查阅上述环境检测结果\n"
-        exit 1
-    fi
-
-    if [[ $VALIDATION_WARNING -eq 0 ]]; then
-        echo
-        read -p "${SYSTEM_NAME} 安装环境检测异常，机器配置建议不能低于 4C 16G 200G。是否跳过? [y/n](默认y): " skip_warning
-        if [[ ${skip_warning:-y} == "n" ]]; then
-            print_color $COLOR_RED "\n${SYSTEM_NAME} 安装环境检测未通过\n"
-            exit 1
-        fi
-    fi
+    config_installer_minio
 }
 
 pre_install_check() {
     print_subtitle "检查系统要求..."
+
+    exit_code=0
+    skip_warning_code=0
 
     for fn in check_root check_os check_arch check_docker; do
         $fn || exit_code=1
@@ -221,31 +248,34 @@ pre_install_check() {
     done
 
     if [ $exit_code -ne 0 ]; then
-        log_error "${SYSTEM_NAME} 安装环境检测未通过，请查阅上述环境检测结果"
+        log_step_error "安装环境检测未通过，请查阅上述环境检测结果"
         exit 1
     fi
 
     if [ $skip_warning_code -ne 0 ]; then
-        read -p "${SYSTEM_NAME} 安装环境检测异常，机器配置建议不能低于 4C 16G 200G。是否跳过? [y/n](默认y): " skip_warning
+        echo -e "\n"
+        skip_warning=$(read_with_default "环境检测异常，机器配置建议不能低于 4C 16G 200G。是否跳过? [y/n]: " "y")
         if [[ ${skip_warning:-y} == "n" ]]; then
-            log_error "${SYSTEM_NAME} 安装环境检测未通过，请查阅上述环境检测结果"
+            log_step_error "安装环境检测未通过，请查阅上述环境检测结果"
             exit 1
         fi
-        exit 1
     fi
-
-    log_success "${SYSTEM_NAME} 安装环境检测已通过，可以开始安装"
+    echo -e "\n"
+    log_step_success "${SYSTEM_NAME} 安装环境检测已通过，开始安装"
 }
 
 # 开放端口
 open_cmp_port() {
-  local ce_access_port=$(get_env_value CE_ACCESS_PORT)
-  open_port $ce_access_port
+    local compose_ports=$(get_all_ports)
+
+    for compose_port in ${compose_ports}; do
+        open_port $compose_port
+    done
 }
 
 # 配置 CMP
-config_cmp() {
-    printTitle "配置 FIT2CLOUD 服务"
+install_cmp() {
+    print_title "配置 FIT2CLOUD 服务"
 
     # 开放端口
     open_cmp_port
@@ -257,11 +287,10 @@ config_cmp() {
     cp -rp ../fit2cloud $installer_path
     rm -rf $installer_path/fit2cloud/bin/fit2cloud
     chmod -R 777 $installer_path/fit2cloud/data
-    chmod -R 777 $installer_path/fit2cloud/git
     chmod -R 777 $installer_path/fit2cloud/sftp
     chmod -R 777 $installer_path/fit2cloud/conf/rabbitmq
     chmod -R 777 $installer_path/fit2cloud/logs/rabbitmq
-    chmod 644 $installer_path/fit2cloud/conf/my.cnf
+    chmod 644 $installer_path/fit2cloud/conf/mysql/my.cnf
     \cp fit2cloud.service /etc/init.d/fit2cloud
     chmod a+x /etc/init.d/fit2cloud
     \cp f2cctl /usr/bin/f2cctl
@@ -269,11 +298,9 @@ config_cmp() {
     log_ok
 
     log_info_inline "开机自启"
-    os=$(get_os)
-    os_version=$(get_os_version)
 
     # 开机自启
-    if [[ $os_version == 7 || $os == "kylin" ]]; then
+    if [[ $OS_VERSION == 7 || $OS == "kylin" ]]; then
         chkconfig --add fit2cloud
         fit2cloud_service=$(grep "service fit2cloud start" /etc/rc.d/rc.local | wc -l)
         if [[ "$fit2cloud_service" -eq 0 ]]; then
@@ -282,7 +309,7 @@ config_cmp() {
         fi
         chmod +x /etc/rc.d/rc.local
     log_ok
-    elif [[ $os_version == 20 || $os_version == 22 || $os_version == 24 ]]; then
+    elif [[ $OS_VERSION  =~ ^(20|22|24) ]]; then
         if [[ -f /etc/init.d/fit2cloud ]]; then
             chmod +x /etc/init.d/fit2cloud
         else
@@ -299,58 +326,76 @@ config_cmp() {
     log_ok
 }
 
-# 配置访问地址
-config_cmp_address() {
-    printTitle "配置云管服务器的访问地址"
-
-    # 查询结果转数组
-    nums=($SYSTEM_IPS)
-    ip_addr="${nums[0]}"
-
-    if [ ${#nums[@]} -gt 1 ]; then
-        # 多个网卡 IP
-        echo -e "存在多个网卡 IP："
-        for i in "${nums[@]}"; do
-            echo "    $i"
-        done
-        read -p "将自动设置云管访问地址为：${nums[0]}；是否修改？(y/n) " be_sure
-        if [[ "$be_sure" == "y" ]]; then
-            read -p "请输入云管访问地址，按 Enter 确认：" ip_addr
-            ip_addr=$(clean_address "${ip_addr:-${nums[0]}}")
-        fi
-    elif [ ${#nums[@]} -eq 1 ]; then
-        # 只有一个网卡 IP
-        ip_addr="${nums[0]}"
-        echo "    http://$ip_addr"
+# 启动 CMP
+start_cmp() {
+    print_title "启动 FIT2CLOUD 服务"
+    log_info_inline "等待服务启动..."
+    if [[ $OS_VERSION == 7 || $OS == "kylin" ]]; then
+        service fit2cloud start >> $INSTALL_LOG 2>&1
+        log_ok
+    elif [[ $OS_VERSION  =~ ^(20|22|24) ]]; then
+        /etc/init.d/fit2cloud start >> $INSTALL_LOG 2>&1
+        log_step_success "OK 使用/etc/init.d/fit2cloud [status | start | stop] 来进行服务管理"
     else
-        # 没有网卡 IP
-        echo "没有查询到网卡 IP，请输入一个云管访问地址的 IP 或域名（可留空）。"
-        read -p "之后可在【管理中心-系统设置-系统参数】维护，按 Enter 确认：" ip_addr
-        ip_addr=$(clean_address "$ip_addr")
-        [ -n "$ip_addr" ] && echo "    http://$ip_addr"
+        log_step_error "未找到此操作系统的启动命令, 请手动重启"
     fi
-
-    # 写入配置文件（即使 ipAddr 为空也写，方便后续修改）
-    write_config "$ip_addr"
-
-    # 数据采集配置文件需要配置当前宿主机真实 IP（如需启用可解开注释）
-    # sed -i "s@tcp://localip:2375@tcp://$ip_addr:2375@g" "$installerPath/fit2cloud/conf/telegraf.conf"
-
-    echo "配置已写入，可在【管理中心-系统设置-系统参数】中搜索 fit2cloud.cmp.address 进行管理。"
-    echo "配置云管服务器的访问地址结束。"
 }
 
+# 安装扩展包
+install_extensions() {
+    if [ ! -d $EXTENSIONS_DIR ];then
+        return
+    fi
+    extensions=$(ls -1 "$EXTENSIONS_DIR")
+    extensions_num=($(ls -1 "$EXTENSIONS_DIR"))
+    if [ ${#extensions_num[@]} -eq 0 ]; then
+      return
+    fi
+    print_title "安装扩展模块"
+    while 'true';do
+        starting_num=$(service fit2cloud status | grep starting | wc -l)
+        if [ "$starting_num" -eq 0 ];then
+            for i in ${extensions[@]} ; do
+                choice_install_extension=$(read_with_default "是否安装扩展模块 ${i}? [y/n] " "n")
+                if [[ "$choice_install_extension" =~ ^[Yy]$ ]]; then
+                    /bin/f2cctl install-module $i
+                fi
+            done
+            break
+        else
+            echo -e "等待服务启动...\n"
+            sleep 10
+        fi
+    done
+}
+
+# 安装
 install() {
   # 安装 docker
   install_docker
   # 加载镜像
-  load_images
-  # 配置服务
-  config_cmp
-  # 配置服务
-  config_cmp_address
+  load_images "$DOCKER_IMAGE_DIR"
+  # 安装服务
+  install_cmp
+  # 启动服务
+  start_cmp
+  # 安装扩展模块
+  install_extensions
 }
 
+# 结束提示
+show_end_tip() {
+    local ip=$(get_env_value CE_ACCESS_IP)
+    local protocol=$(get_env_value CE_ACCESS_PROTOCOL)
+    local port=$(get_env_value CE_ACCESS_PORT)
+    echo
+    echo
+    log_success "${SYSTEM_NAME} 安装完成，请在服务完全启动后(大概需要等待5分钟左右)访问 $protocol://${ip}:${port} 来访问 FIT2CLOUD 云管平台"
+    log_success "系统管理员初始登录信息："
+    log_success "用户名：admin"
+    log_success "密码：Password123@cmp"
+    echo
+}
 
 # 输出
 show_welcome() {
@@ -363,7 +408,7 @@ cat << EOF
 ██║     ██║   ██║   ███████╗╚██████╗███████╗╚██████╔╝╚██████╔╝██████╔╝
 ╚═╝     ╚═╝   ╚═╝   ╚══════╝ ╚═════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝
 EOF
-    print_title "开始安装 ${SYSTEM_NAME}，版本 - $VERSION_INFO"
+    print_title "开始安装 ${SYSTEM_NAME}"
 }
 
 # 主函数
@@ -377,8 +422,10 @@ main() {
     pre_install_check
     # 配置
     check_prerequisites
-
+    # 安装
     install
+    # 结束提示
+    show_end_tip
 }
 
 # 执行主函数

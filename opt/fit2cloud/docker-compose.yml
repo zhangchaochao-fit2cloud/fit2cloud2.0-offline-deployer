@@ -6,10 +6,6 @@ services:
       file: ./external-compose/base-docker-compose.yml
       service: management-center
     depends_on:
-      mysql:
-        condition: service_healthy
-      influxdb:
-        condition: service_healthy
       ansible:
         condition: service_healthy
 
@@ -62,9 +58,6 @@ services:
     extends:
       file: ./external-compose/base-docker-compose.yml
       service: keycloak
-    depends_on:
-      mysql:
-        condition: service_healthy
 
   ansible:
     extends:

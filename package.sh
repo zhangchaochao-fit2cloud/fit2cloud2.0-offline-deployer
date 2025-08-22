@@ -454,7 +454,7 @@ main() {
 
     # 复制扩展包
     make_extensions
-#
+
     # 创建安装包
     create_installer_package
 
