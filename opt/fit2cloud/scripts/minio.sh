@@ -37,7 +37,7 @@ configure_external_minio() {
 
 configure_local_minio() {
 
-    local installer_path=$(get_env_value CE_MINIO_INSTALL_PATH "/opt/fit2cloud/data/minio")
+    local installer_path=$(get_env_value CE_MINIO_INSTALL_PATH "/opt")
 
     while true; do
         minio_folder=$(read_with_default "2. MinIO 安装路径" "${installer_path}")

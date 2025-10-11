@@ -7,16 +7,18 @@
 # 版本: 3.0
 # 描述: 自动化安装 FIT2CLOUD 云管平台的离线部署脚本
 #================================================================
-# set -ex
+ set -ex
 
 # 获取脚本所在目录
-readonly BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly INSTALL_LOG="/tmp/fit2cloud-install.log"
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$BASE_DIR/../fit2cloud/scripts"
+INSTALL_LOG="/tmp/fit2cloud-install.log"
 
 # 引入工具函数库
-source "$BASE_DIR/../fit2cloud/scripts/common.sh"
-source "$BASE_DIR/../fit2cloud/scripts/os.sh"
-source "$BASE_DIR/../fit2cloud/scripts/minio.sh"
+source "$SCRIPT_DIR/common.sh"
+source "$SCRIPT_DIR/docker.sh"
+source "$SCRIPT_DIR/os.sh"
+source "$SCRIPT_DIR/minio.sh"
 
 
 SYSTEM_NAME="FIT2CLOUD 云管平台 3.0"
@@ -277,8 +279,6 @@ open_cmp_port() {
 install_cmp() {
     print_title "配置 FIT2CLOUD 服务"
 
-    # 开放端口
-    open_cmp_port
 
     local installer_path=$(get_env_value CE_INSTALL_PATH)
 
@@ -297,6 +297,9 @@ install_cmp() {
     chmod a+x /usr/bin/f2cctl
     log_ok
 
+    # 开放端口
+    open_cmp_port
+
     log_info_inline "开机自启"
 
     # 开机自启
@@ -308,7 +311,7 @@ install_cmp() {
             echo "service fit2cloud start" >> /etc/rc.d/rc.local
         fi
         chmod +x /etc/rc.d/rc.local
-    log_ok
+        log_ok
     elif [[ $OS_VERSION  =~ ^(20|22|24) ]]; then
         if [[ -f /etc/init.d/fit2cloud ]]; then
             chmod +x /etc/init.d/fit2cloud

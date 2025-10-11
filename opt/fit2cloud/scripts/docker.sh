@@ -23,11 +23,14 @@ source "$SCRIPT_DIR/common.sh"
 
 # 生成 compose 参数
 get_docker_compose_args() {
+
+    # env 配置文件
+    local env_file="${1:-$ENV_FILE}"
     local compose="$COMPOSE_DIR/docker-compose.yml"
     local base_compose="$EXT_COMPOSE_DIR/base-docker-compose.yml"
     local middleware_dir="$EXT_COMPOSE_DIR/middleware"
     local ce_mode=$(get_env_value CE_MODE)
-    local compose_args="--env-file $ENV_FILE -f $compose"
+    local compose_args="--env-file $env_file -f $compose"
 
     if [ "1${ce_mode}" == "1ha" ]; then
         compose_args="$compose_args -f $EXT_COMPOSE_DIR/ha-docker-compose.yml"
@@ -55,21 +58,28 @@ get_docker_compose_args() {
 
 # 获取执行命令
 get_docker_compose_exe() {
-    # 获取构建参数
-    local args=$(get_docker_compose_args)
 
-    if [[ -n "$REGISTRY_URL" ]]; then
-        # 以数组方式返回
-        echo "env IMAGE_ADDRESS=${REGISTRY_URL} docker-compose $args"
-    else
-        echo "docker-compose $args"
-    fi
+    # env 配置文件
+    local env_file="$1"
+    # 获取构建参数
+    local args=$(get_docker_compose_args $env_file)
+
+#    if [[ -n "$REGISTRY_URL" ]]; then
+#        # 以数组方式返回
+#        echo "env IMAGE_ADDRESS=${REGISTRY_URL} docker-compose $args"
+#    else
+#        echo "docker-compose $args"
+#    fi
+    echo "docker-compose $args"
 }
 
 # 获取所有服务镜像
 get_all_images() {
+
+    # env 配置文件
+    local env_file="$1"
     # 获取构建参数
-    local exe=$(get_docker_compose_exe)
+    local exe=$(get_docker_compose_exe $env_file)
 
     # 获取镜像列表
     local image_names=$($exe config | grep "image:" | grep "$args" | awk '{print $2}' | tr -d '"')
@@ -79,8 +89,11 @@ get_all_images() {
 
 # 获取所有服务端口
 get_all_ports() {
+
+    # env 配置文件
+    local env_file="$1"
     # 获取构建参数
-    local exe=$(get_docker_compose_exe)
+    local exe=$(get_docker_compose_exe $env_file)
 
     # 获取镜像列表
     local ports=$($exe config | grep 'published' | grep -o '[0-9]\+')
@@ -88,14 +101,20 @@ get_all_ports() {
     echo $ports
 }
 
+# =============================================================================
+# Docker 镜像管理函数
+# =============================================================================
+
 # 拉取 Docker 镜像
 pull_docker_images() {
     print_subtitle "拉取 Docker 镜像..."
 
+    # env 配置文件
+    local env_file="$1"
     # 获取构建镜像
-    local compose_images=$(get_all_images)
+    local compose_images=$(get_all_images $env_file)
     # 平台架构
-    local platform=$(get_env_value PLATFORM)
+    local platform=$(get_env_value PLATFORM "amd64" $env_file)
 
     # 拉取镜像
     for image_name in ${compose_images}; do
@@ -123,6 +142,7 @@ export_docker_images() {
     print_subtitle "导出 Docker 镜像..."
 
     local images_dir="$1"
+    local env_file="$2"
     if [[ -z "$images_dir" ]]; then
         log_warn "没有指定 Docker 导出目录"
         return
@@ -130,7 +150,7 @@ export_docker_images() {
 
     cd "$images_dir"
     # 获取构建镜像
-    compose_images=$(get_all_images)
+    compose_images=$(get_all_images $env_file)
 
     # 导出镜像
     for image_name in ${compose_images}; do
@@ -170,7 +190,6 @@ download_local_docker() {
 
     # 复制 docker 到指定文件夹
     cp -f ${docker_zip} ${docker_tools_dir}/${docker_package}
-
     cp -f ${redhat_docker_tar} ${docker_tools_dir}/docker-rhel8.tar.gz
 }
 
@@ -179,16 +198,16 @@ download_remote_docker() {
     local platform=$(get_env_value PLATFORM)
     local docker_tools_dir=$1
     local docker_package=$2
+    target_url=$DOCKER_PACKAGE_URL
 
-    DOCKER_PACKAGE_URL=$DOCKER_PACKAGE_URL
     if [[ "${platform}" == "arm64" ]]; then
-      DOCKER_PACKAGE_URL=$DOCKER_PACKAGE_URL_ARM64
+      target_url=$DOCKER_PACKAGE_URL_ARM64
     fi
 
     cd ${docker_tools_dir}
 
     # 下载远程 docker
-    download_file "${DOCKER_PACKAGE_URL}" "./${docker_package}"
+    download_file "${target_url}" "./${docker_package}"
 
     # 下载 redhat 版本 docker
     download_file "${DOCKER_PACKAGE_URL_RHEL8}" "./docker-rhel8.tar.gz"
@@ -235,6 +254,23 @@ download_docker() {
     cd - > /dev/null
 }
 
+# 加载 Docker 镜像
+load_images() {
+  print_subtitle "加载 Docker 镜像..."
+  local docker_images_folder="${1:-../../docker-images}"
+  systemctl restart docker
+  for docker_image in ${docker_images_folder}/*; do
+    local temp_file=$(basename $docker_image)
+    log_info_inline "${temp_file} "
+    docker load -q -i ${docker_images_folder}/$temp_file > /dev/null
+    log_ok
+  done
+}
+
+# =============================================================================
+# Docker 服务管理函数
+# =============================================================================
+
 # 获取 Docker 存储目录
 get_docker_dir() {
     docker info --format '{{.DockerRootDir}}' 2>/dev/null
@@ -259,6 +295,14 @@ docker_start() {
         systemctl enable docker > /dev/null
         log_ok
     fi
+}
+
+# 检查 Docker 是否存在
+check_docker_exists() {
+    if ! command -v docker >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
 }
 
 # Docker 检测
@@ -294,6 +338,7 @@ check_docker_compose() {
     return 0
 }
 
+# 检查必要的端口
 check_required_ports() {
     local compose_file="${BASE_DIR}/fit2cloud/docker-compose.yml"
 
@@ -304,6 +349,10 @@ check_required_ports() {
         done
     fi
 }
+
+# =============================================================================
+# Docker 安装配置函数
+# =============================================================================
 
 # 安装 docker
 install_docker() {
@@ -449,15 +498,6 @@ EOF
     systemctl restart docker
 
     log_info "Docker 配置完成"
-}
-
-
-# Docker 是否存在
-check_docker_exists() {
-    if ! command -v docker >/dev/null 2>&1; then
-        return 1
-    fi
-    return 0
 }
 
 # Docker 检测

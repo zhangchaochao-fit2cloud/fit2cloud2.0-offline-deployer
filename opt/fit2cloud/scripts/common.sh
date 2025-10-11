@@ -31,82 +31,83 @@ function get_padding {
     printf -v padding '%*s' $(( total_width - length )) ''
 }
 
+# 内联信息日志
 log_info_inline() {
     local msg="$1"
-    msg_length=${#msg}
-
     get_padding "$msg"
     echo -ne "${GREEN}[INFO] ${NC} $1 $padding"
 }
 
+# 步骤信息日志
 log_step_info() {
     echo -e "${GREEN}$1${NC}"
 }
 
+# 信息日志
 log_info() {
     echo -e "${GREEN}[INFO] ${NC}$1"
 }
 
+# 标题信息日志
 log_title_info() {
     echo -e "${GREEN}【$1】${NC}\n"
 }
 
-#log_warn_inline() {
-#    echo -ne "${YELLOW}[WARN]${NC} $1"
-#}
-
+# 步骤警告日志
 log_step_warn() {
     echo -e "${YELLOW}$1${NC}"
 }
 
+# 警告日志
 log_warn() {
     echo -e "${YELLOW}[WARN] ${NC} $1"
 }
 
+# 步骤错误日志
 log_step_error() {
     echo -e "${RED}$1${NC}"
 }
 
+# 错误日志
 log_error() {
     echo -e "${RED}[ERROR] ${NC} $1"
 }
 
+# 步骤调试日志
 log_step_debug() {
     if [[ "${DEBUG:-false}" == "true" ]]; then
         echo -e "${CYAN}$1${NC}"
     fi
 }
 
+# 调试日志
 log_debug() {
     if [[ "${DEBUG:-false}" == "true" ]]; then
         echo -e "${CYAN}[DEBUG] ${NC} $1"
     fi
 }
 
+# 成功状态
 log_ok() {
     echo -e "${CYAN}OK${NC} $1"
 }
 
-log_step_error() {
-    echo -e "${RED}$1${NC} "
-}
-
-log_error() {
-    echo -e "${RED}[ERROR] ${NC} $1"
-}
-
+# 步骤成功日志
 log_step_success() {
     echo -e "${CYAN}$1${NC} "
 }
 
+# 成功日志
 log_success() {
     echo -e "${CYAN}[SUCCESS]${NC} $1"
 }
 
+# 打印标题
 print_title() {
     echo -e "\n\n${CYAN}******************************\t $1 \t******************************${NC}\n"
 }
 
+# 打印子标题
 print_subtitle() {
     echo -e "\n${BLUE}------------------\t $1 \t------------------${NC}\n"
 }
@@ -232,68 +233,68 @@ download_file() {
     fi
 }
 
-# =============================================================================
-# Docker 相关函数
-# =============================================================================
+# # =============================================================================
+# # Docker 相关函数
+# # =============================================================================
 
-# 启动 Docker 服务
-docker_start() {
-    log_info "启动 Docker 服务..."
-    if systemctl is-active --quiet docker; then
-        log_info "Docker 服务已在运行"
-    else
-        systemctl start docker
-        systemctl enable docker
-        log_info "Docker 服务启动完成"
-    fi
-}
+# # 启动 Docker 服务
+# docker_start() {
+#     log_info "启动 Docker 服务..."
+#     if systemctl is-active --quiet docker; then
+#         log_info "Docker 服务已在运行"
+#     else
+#         systemctl start docker
+#         systemctl enable docker
+#         log_info "Docker 服务启动完成"
+#     fi
+# }
 
-# 运行 Docker 容器
-docker_run() {
-    local image=$1
-    local name=$2
-    shift 2
-    local args="$@"
+# # 运行 Docker 容器
+# docker_run() {
+#     local image=$1
+#     local name=$2
+#     shift 2
+#     local args="$@"
     
-    log_info "启动容器: $name (镜像: $image)"
-    docker run --name "$name" $args "$image"
-}
+#     log_info "启动容器: $name (镜像: $image)"
+#     docker run --name "$name" $args "$image"
+# }
 
-# 使用 docker-compose 启动服务
-docker_compose_up() {
-    local compose_file=$1
-    local service_name=${2:-""}
+# # 使用 docker-compose 启动服务
+# docker_compose_up() {
+#     local compose_file=$1
+#     local service_name=${2:-""}
     
-    log_info "使用 docker-compose 启动服务: $compose_file"
-    if [[ -n "$service_name" ]]; then
-        docker-compose -f "$compose_file" up -d --no-recreate "$service_name"
-    else
-        docker-compose -f "$compose_file" up -d
-    fi
-}
+#     log_info "使用 docker-compose 启动服务: $compose_file"
+#     if [[ -n "$service_name" ]]; then
+#         docker-compose -f "$compose_file" up -d --no-recreate "$service_name"
+#     else
+#         docker-compose -f "$compose_file" up -d
+#     fi
+# }
 
-# 检查容器健康状态
-docker_check_health() {
-    local container_name=$1
-    local max_wait_time=${2:-120}
-    local wait_interval=${3:-5}
-    local elapsed_time=0
+# # 检查容器健康状态
+# docker_check_health() {
+#     local container_name=$1
+#     local max_wait_time=${2:-120}
+#     local wait_interval=${3:-5}
+#     local elapsed_time=0
     
-    log_info "等待容器 $container_name 健康状态..."
+#     log_info "等待容器 $container_name 健康状态..."
     
-    while [[ "$elapsed_time" -lt "$max_wait_time" ]]; do
-        local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null)
-        if [[ "$health_status" == "healthy" ]]; then
-            log_info "容器 $container_name 已健康"
-            return 0
-        fi
-        sleep "$wait_interval"
-        elapsed_time=$((elapsed_time + wait_interval))
-    done
+#     while [[ "$elapsed_time" -lt "$max_wait_time" ]]; do
+#         local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null)
+#         if [[ "$health_status" == "healthy" ]]; then
+#             log_info "容器 $container_name 已健康"
+#             return 0
+#         fi
+#         sleep "$wait_interval"
+#         elapsed_time=$((elapsed_time + wait_interval))
+#     done
     
-    log_error "容器 $container_name 健康检查超时"
-    return 1
-}
+#     log_error "容器 $container_name 健康检查超时"
+#     return 1
+# }
 
 # =============================================================================
 # 端口检测函数

@@ -11,11 +11,69 @@ set -e
 
 # 获取脚本所在目录
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$BASE_DIR/opt/fit2cloud/scripts"
 
 # 引入工具函数库
-source "$BASE_DIR/opt/fit2cloud/scripts/common.sh"
-source "$BASE_DIR/opt/fit2cloud/scripts/docker.sh"
+source "$SCRIPT_DIR/common.sh"
+source "$SCRIPT_DIR/docker.sh"
 
+
+# 全局变量定义
+# 版本
+FIT2CLOUD_VERSION="2.0"
+# 构建号
+BUILD_NUMBER="1"
+# 版本
+VERSION="master"
+# docker 镜像仓库地址
+REGISTRY_URL="registry.fit2cloud.com/north"
+# 架构
+PLATFORM="amd64"
+# 输出目录
+OUTPUT_DIR="$BASE_DIR/dist"
+# 安装目录
+INSTALLER_DIR=""
+# 镜像打包目录
+DOCKER_IMAGES_DIR=""
+# 插件目录
+TMP_CLOUD_PLUGINS_DIR=""
+# 插件目录
+CLOUD_PLUGINS_DIR=""
+# tools 目录
+TOOLS_DIR=""
+# 中间件目录
+MIDDLEWARE_DIR=""
+# 扩展包目录
+EXTENSIONS_DIR=""
+# 插件包，默认全部
+PLUGIN_PACKAGES=""
+# 中间件包
+DEPLOYMENT_PACKAGES=()
+# 扩展包
+EXTENSION_PACKAGES=()
+
+# 构建 ID
+BUILD_ID=""
+# 构建时间
+BUILD_TIME=""
+# 整包名
+PACKAGE_FILENAME=""
+# 整包全名
+FULL_PACKAGE_FILENAME=""
+# 整包 MD5 名
+MD5_PACKAGE_FILENAME=""
+# 插件包名
+PLUGIN_PACKAGE_FILENAME=""
+# 插件包全名
+FULL_PLUGIN_PACKAGE_FILENAME=""
+# 插件包 MD5 名
+MD5_PLUGIN_PACKAGE_FILENAME=""
+# 试运行模式
+DRY_RUN=false
+# 清理临时文件
+CLEAN_TEMP=false
+# 从本地目录导入Docker
+FROM_DOCKER_LOCAL_DIR=""
 
 # 显示帮助信息
 show_help() {
@@ -32,6 +90,9 @@ Fit2Cloud 2.0 打包脚本
     -o, --output-dir DIR    输出目录 [默认: ./dist]
     --dry-run               试运行模式
     --clean                 清理临时文件
+    -p, --plugin-packages   插件包，默认全部
+    -d, --deployment-packages 中间件包
+    -e, --extension-packages 扩展包
 
 示例:
     # 基本打包
@@ -48,56 +109,6 @@ EOF
 
 # 解析命令行参数
 parse_args() {
-    # 版本
-    FIT2CLOUD_VERSION="2.0"
-    BUILD_NUMBER="1"
-    VERSION="master"
-    # docker 镜像仓库地址
-    REGISTRY_URL="registry.fit2cloud.com"
-    # 输出目录
-    OUTPUT_DIR="$BASE_DIR/dist"
-    # 安装目录
-    INSTALLER_DIR="$OUTPUT_DIR/installer"
-    # 镜像打包目录
-    DOCKER_IMAGES_DIR="$INSTALLER_DIR/docker-images"
-    # 插件目录
-    TMP_CLOUD_PLUGINS_DIR="$OUTPUT_DIR/cloud_plugins"
-    # 插件目录
-    CLOUD_PLUGINS_DIR="$INSTALLER_DIR/fit2cloud/data/plugins"
-    # tools
-    TOOLS_DIR="$INSTALLER_DIR/fit2cloud/tools"
-    # 中间件目录
-    MIDDLEWARE_DIR="$INSTALLER_DIR/fit2cloud/middleware_init"
-    # 扩展包目录
-    EXTENSIONS_DIR="$INSTALLER_DIR/extensions"
-    # 插件包，默认全部
-    PLUGIN_PACKAGES=""
-    # 中间件包
-    DEPLOYMENT_PACKAGES=""
-    # 扩展包
-    EXTENSION_PACKAGES=""
-
-    BUILD_ID=""
-    # 整包名
-    PACKAGE_FILENAME=""
-    # 整包全名
-    FULL_PACKAGE_FILENAME=""
-    # 整包 MD5 名
-    MD5_PACKAGE_FILENAME=""
-
-    # 插件包名
-    PLUGIN_PACKAGE_FILENAME=""
-    # 插件包全名
-    FULL_PLUGIN_PACKAGE_FILENAME=""
-    # 插件包 MD5 名
-    MD5_PLUGIN_PACKAGE_FILENAME=""
-
-
-    # 尝试运行
-    DRY_RUN=false
-    # 清理临时文件
-    CLEAN_TEMP=false
-
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help)
@@ -136,6 +147,10 @@ parse_args() {
                 EXTENSION_PACKAGES=($2)
                 shift 2
             ;;
+            --platform)
+                PLATFORM=($2)
+                shift 2
+            ;;
             --dry-run)
                 DRY_RUN=true
                 shift
@@ -151,6 +166,16 @@ parse_args() {
                 ;;
         esac
     done
+
+    # 根据解析的参数设置目录变量
+    INSTALLER_DIR="$OUTPUT_DIR/installer"
+    DOCKER_IMAGES_DIR="$INSTALLER_DIR/docker-images"
+    TMP_CLOUD_PLUGINS_DIR="$OUTPUT_DIR/cloud_plugins"
+    CLOUD_PLUGINS_DIR="$INSTALLER_DIR/fit2cloud/data/plugins"
+    TOOLS_DIR="$INSTALLER_DIR/fit2cloud/tools"
+    MIDDLEWARE_DIR="$INSTALLER_DIR/fit2cloud/middleware_init"
+    EXTENSIONS_DIR="$INSTALLER_DIR/extensions"
+    INSTALLER_ENV="$INSTALLER_DIR/fit2cloud/.env"
 }
 
 # 检查前置条件
@@ -188,20 +213,14 @@ create_output_dirs() {
 
     # 先清理上次的打包目录
     rm -rf "$OUTPUT_DIR"
-    # 创建打包目录
-    mkdir -p "$OUTPUT_DIR"
-    # 打包目录
-    mkdir -p "$INSTALLER_DIR"
-    # Docker 镜像目录
-    mkdir -p "$DOCKER_IMAGES_DIR"
-    # 插件目录
-    mkdir -p "$CLOUD_PLUGINS_DIR"
-    # 扩展插件目录
-    mkdir -p "$TMP_CLOUD_PLUGINS_DIR"
-    # 中间件目录
-    mkdir -p "$MIDDLEWARE_DIR"
-    # 扩展包目录
-    mkdir -p "$EXTENSIONS_DIR"
+    # 创建所需目录
+    mkdir -p "$OUTPUT_DIR" \
+             "$INSTALLER_DIR" \
+             "$DOCKER_IMAGES_DIR" \
+             "$CLOUD_PLUGINS_DIR" \
+             "$TMP_CLOUD_PLUGINS_DIR" \
+             "$MIDDLEWARE_DIR" \
+             "$EXTENSIONS_DIR"
 
     log_ok
 }
@@ -211,10 +230,7 @@ generate_package_file() {
     BUILD_TIME=$(date "+%Y%m%d%H%M")
     local today=$(date "+%Y.%m.%d")
     local platform=$(get_env_value PLATFORM)
-    local build_version=${version}
-    if [ -z ${build_version} ];then
-      build_version="V3.1.${BUILD_NUMBER}-${VERSION}"
-    fi
+    local build_version=${version:-"V3.1.${BUILD_NUMBER}-${VERSION}"}
     BUILD_ID="${build_version} Build ${BUILD_TIME}"
     # 整包
     PACKAGE_FILENAME="cloudexplorer-${build_version}-${platform}-${today}"
@@ -239,12 +255,17 @@ prepare_installer_files() {
     cp -rp opt/* "$INSTALLER_DIR/"
 
     # 清理不需要的文件
-    rm -rf "$INSTALLER_DIR/fit2cloud/data/mysql/*"
+#    rm -rf "$INSTALLER_DIR/fit2cloud/data/mysql/*"
 
     # 移动二进制文件
     mv "$INSTALLER_DIR/fit2cloud/bin/fit2cloud/"* "$INSTALLER_DIR/"
 
     export CE_INSTALL_PATH="$BASE_DIR/opt"
+    export CE_MINIO_INSTALL_PATH="$BASE_DIR/opt"
+
+    # 修改环境变量
+    set_env_value IMAGE_ADDRESS ${REGISTRY_URL}  $INSTALLER_ENV
+    set_env_value PLATFORM ${PLATFORM}  $INSTALLER_ENV
 
     # 整包名称
     generate_package_file
@@ -294,8 +315,7 @@ make_middleware() {
 
     print_subtitle "复制部署包..."
 
-    IFS=' ' read -r -a packages <<< "$DEPLOYMENT_PACKAGES"
-    for package in "${packages[@]}"; do
+    for package in "${DEPLOYMENT_PACKAGES[@]}"; do
         if [[ "$DRY_RUN" == "true" ]]; then
           filename=$(basename "$package")
           decode_filename=$(echo -e $(printf '%b' "${filename//%/\\x}"))
@@ -311,14 +331,13 @@ make_middleware() {
 }
 
 make_extensions() {
-    if [ "a$EXTENSION_PACKAGES" == 'a' ];then
+    if [ "${#EXTENSION_PACKAGES[@]}" -eq 0 ]; then
         return
     fi
 
     print_subtitle "复制扩展包..."
 
-    IFS=' ' read -r -a packages <<< "$EXTENSION_PACKAGES"
-    for package in "${packages[@]}"; do
+    for package in "${EXTENSION_PACKAGES[@]}"; do
         local filename=$(basename "$package")
         local decode_filename=$(echo -e $(printf '%b' "${filename//%/\\x}"))
         if [[ "$DRY_RUN" == "true" ]]; then
@@ -394,10 +413,6 @@ cleanup_temp_files() {
 # 显示打包信息
 show_package_info() {
     print_title "Fit2Cloud ${FIT2CLOUD_VERSION} 打包完成！"
-#
-#    local build_time=$(date "+%Y%m%d%H%M")
-#    local filename="fit2cloud-cmp-installer-V${FIT2CLOUD_VERSION}.${BUILD_NUMBER}"
-#    local full_filename="${filename}.tar.gz"
 
     cat << EOF
 
@@ -408,13 +423,8 @@ show_package_info() {
 构建号: $BUILD_NUMBER
 构建时间: $BUILD_TIME
 镜像仓库: $REGISTRY_URL
-输出目录: $OUTPUT_DIR
+安装包目录: $OUTPUT_DIR
 安装包: $FULL_PACKAGE_FILENAME
-
-=============================================================================
-文件位置
-=============================================================================
-安装包目录: $OUTPUT_DIR/$full_filename
 
 =============================================================================
 
@@ -438,10 +448,10 @@ main() {
     prepare_installer_files
 
     # 拉取 Docker 镜像
-    pull_docker_images
+    pull_docker_images $INSTALLER_ENV
 
     # 导出 Docker 镜像
-    export_docker_images $DOCKER_IMAGES_DIR
+    export_docker_images $DOCKER_IMAGES_DIR $INSTALLER_ENV
 
     # 下载工具
     download_tools
