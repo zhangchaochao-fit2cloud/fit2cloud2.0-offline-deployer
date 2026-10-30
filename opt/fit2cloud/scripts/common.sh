@@ -21,8 +21,9 @@ get_padding() {
     export LC_ALL=en_US.UTF-8
     local msg=$1
     local total_width=70
-    len1=$(echo "$msg" | grep -o '[^一-龥]' | wc -l)
-    len2=$(echo "$msg" | grep -o "[一-龥]" | wc -l)
+    # grep 无匹配时退出码为 1，入口脚本 set -euo pipefail 下会中断脚本，必须 || true 兜底
+    len1=$(echo "$msg" | grep -o '[^一-龥]' | wc -l || true)
+    len2=$(echo "$msg" | grep -o "[一-龥]" | wc -l || true)
     length=$(( len1 + len2 * 2 ))
     printf -v padding '%*s' $(( total_width - length )) ''
 }
