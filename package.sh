@@ -159,7 +159,12 @@ build_render_cfg() {
     print_subtitle "编译 ce-render-cfg..."
 
     cd "$RENDER_CFG_DIR"
-    make cross VERSION="$FIT2CLOUD_VERSION"
+    # 编译失败不阻塞打包（构建机 Go 版本过低等），与 Go 未安装同路径告警跳过
+    if ! make cross VERSION="$FIT2CLOUD_VERSION"; then
+        log_warn "ce-render-cfg 编译失败（构建机需 Go 1.21+），跳过编译"
+        cd "$BASE_DIR"
+        return
+    fi
 
     local standalone_dir="$installer_dir/fit2cloud/bin/fit2cloud/standalone"
     ensure_dir "$standalone_dir"
