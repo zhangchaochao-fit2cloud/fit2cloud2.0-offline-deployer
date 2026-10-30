@@ -48,15 +48,21 @@ create_package() {
 
     cd "$output_dir"
 
+    # 压缩程序探测：pigz 并行压缩明显快于单线程 gzip（多核机器提升数倍）
+    local compress_prog="gzip"
+    command -v pigz &>/dev/null && compress_prog="pigz"
+    [[ "$compress_prog" == "gzip" ]] && log_info "未检测到 pigz，使用 gzip 压缩（安装 pigz 可显著加速打包）"
+
     if [[ -d "$installer_dir" ]]; then
-        tar -zcf "$full_package_filename" installer
+        # 镜像层本身已压缩，外层 gzip 收益很小；耗时主要在 IO，pigz 可并行压缩
+        tar --use-compress-program="$compress_prog" -cf "$full_package_filename" installer
         md5sum "$full_package_filename" | awk '{print "md5: "$1}' > "$md5_package_filename"
         log_success "安装包: $full_package_filename"
     fi
 
     local cloud_plugins_dir="$output_dir/cloud_plugins"
     if [[ -d "$cloud_plugins_dir" && "$(ls -A "$cloud_plugins_dir" 2>/dev/null)" ]]; then
-        tar -zcf "$full_plugin_package_filename" cloud_plugins
+        tar --use-compress-program="$compress_prog" -cf "$full_plugin_package_filename" cloud_plugins
         md5sum "$full_plugin_package_filename" | awk '{print "md5: "$1}' > "$md5_plugin_package_filename"
         log_success "插件包: $full_plugin_package_filename"
     fi
