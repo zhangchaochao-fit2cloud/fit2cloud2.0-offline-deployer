@@ -227,6 +227,8 @@ main() {
 
     set_env_value IMAGE_ADDRESS "$REGISTRY_URL" "$INSTALLER_ENV"
     set_env_value PLATFORM "$PLATFORM" "$INSTALLER_ENV"
+    # VERSION 写入镜像 tag（默认 <版本号>.<构建号>），prepare 阶段的占位值以这里为准
+    set_env_value VERSION "$VERSION" "$INSTALLER_ENV"
 
     if [[ "$SKIP_RENDER_CFG" != "true" ]]; then
         build_render_cfg "$INSTALLER_DIR"
