@@ -57,8 +57,19 @@ get_all_images() {
     local env_file="${1:-$ENV_FILE}"
     local compose_cmd
     compose_cmd=$(get_docker_compose_exe "$env_file")
+
+    # compose 文件与 .env 同目录（打包后为 installer/fit2cloud/docker-compose.yml），
+    # 显式指定 -f/--env-file，不依赖调用方工作目录
+    local env_dir compose_file
+    env_dir="$(cd "$(dirname "$env_file")" && pwd)"
+    compose_file="$env_dir/docker-compose.yml"
+    if [[ ! -f "$compose_file" ]]; then
+        return 0
+    fi
+
     local image_names
-    image_names=$($compose_cmd config 2>/dev/null | grep "image:" | awk '{print $2}' | tr -d '"')
+    image_names=$($compose_cmd -f "$compose_file" --env-file "$env_file" config 2>/dev/null \
+        | grep "image:" | awk '{print $2}' | tr -d '"')
     echo "$image_names"
 }
 
