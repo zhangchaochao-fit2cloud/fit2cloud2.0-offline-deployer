@@ -50,8 +50,7 @@ Fit2Cloud 2.0 打包脚本
     -e, --extension-packages 扩展包 URL（多个用逗号分隔）
     --env-file FILE         打包环境文件（如 packaging.env，仅填充未在命令行指定的项）
     --skip-render-cfg       跳过 ce-render-cfg 编译
-    --with-python           包含 Python 版本脚本（实验性）
-    --with-python           在安装包中包含 Python 版本（实验性）
+    --with-python           在安装包中包含 Python 版本脚本（实验性）
 
 示例:
     $0 -v 2.0.1 -b 100

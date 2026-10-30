@@ -121,7 +121,11 @@ copy_middleware() {
             log_step_success "跳过"
             continue
         fi
-        wget --quiet --show-progress --progress=bar:force -O "$middleware_dir/pkg.zip" "$package"
+        if [[ -f "$package" ]]; then
+            cp -f "$package" "$middleware_dir/pkg.zip"
+        else
+            wget --quiet --show-progress --progress=bar:force -O "$middleware_dir/pkg.zip" "$package"
+        fi
         unzip -O utf8 -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null 2>&1
         rm -f "$middleware_dir/pkg.zip"
         rm -rf "$middleware_dir/middleware_init/__MACOSX"
@@ -149,6 +153,11 @@ copy_extensions() {
             log_step_success "跳过"
             continue
         fi
-        wget --quiet --show-progress --progress=bar:force -O "$extensions_dir/$decode_filename" "$package"
+        # 本地路径直接复制，远程 URL 走 wget
+        if [[ -f "$package" ]]; then
+            cp -f "$package" "$extensions_dir/$decode_filename"
+        else
+            wget --quiet --show-progress --progress=bar:force -O "$extensions_dir/$decode_filename" "$package"
+        fi
     done
 }
