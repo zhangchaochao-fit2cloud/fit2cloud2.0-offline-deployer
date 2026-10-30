@@ -229,6 +229,10 @@ main() {
     set_env_value PLATFORM "$PLATFORM" "$INSTALLER_ENV"
     # VERSION 写入镜像 tag（默认 <版本号>.<构建号>），prepare 阶段的占位值以这里为准
     set_env_value VERSION "$VERSION" "$INSTALLER_ENV"
+    # 中间件镜像：允许 --env-file 注入 MINIO_DOCKER_IMAGE / WEBSOCKIFY_DOCKER_IMAGE 覆盖
+    # 默认 minio 跟随分支 tag（与业务镜像一致），websockify 仓库仅有 latest
+    set_env_value MINIO_DOCKER_IMAGE "${MINIO_DOCKER_IMAGE:-$REGISTRY_URL/minio:$VERSION}" "$INSTALLER_ENV"
+    set_env_value WEBSOCKIFY_DOCKER_IMAGE "${WEBSOCKIFY_DOCKER_IMAGE:-$REGISTRY_URL/websockify:latest}" "$INSTALLER_ENV"
 
     if [[ "$SKIP_RENDER_CFG" != "true" ]]; then
         build_render_cfg "$INSTALLER_DIR"

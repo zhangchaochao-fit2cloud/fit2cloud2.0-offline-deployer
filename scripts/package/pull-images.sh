@@ -44,16 +44,17 @@ pull_images() {
     local total=${#image_array[@]}
     local pulled=0
     local failed=0
+    local failed_images=()
 
     if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "试运行：共 ${total} 个镜像，跳过拉取"
         for image_name in "${image_array[@]}"; do
-            local tag_name
-            tag_name=$(basename "$image_name")
-            log_info_inline "${tag_name}"
-            log_step_success "跳过"
+            log_info "  $(basename "$image_name")"
             pulled=$((pulled + 1))
         done
     else
+        log_info "拉取 ${total} 个镜像（平台 linux/${platform}，并发 8）"
+
         local tmpdir
         tmpdir=$(mktemp -d)
         local pids=()
@@ -61,10 +62,6 @@ pull_images() {
         local idx=0
 
         for image_name in "${image_array[@]}"; do
-            local tag_name
-            tag_name=$(basename "$image_name")
-            log_info_inline "${tag_name}"
-
             (
                 if pull_one "$image_name" "$platform"; then
                     verify_image_arch "$image_name" "$platform"
@@ -91,7 +88,7 @@ pull_images() {
             wait "$pid" 2>/dev/null || true
         done
 
-        # 统计结果
+        # 统计结果，失败镜像逐个列出便于排查
         for idx_val in "${indices[@]}"; do
             local result
             result=$(cat "$tmpdir/result_$idx_val" 2>/dev/null || echo "fail")
@@ -99,6 +96,7 @@ pull_images() {
                 pulled=$((pulled + 1))
             else
                 failed=$((failed + 1))
+                failed_images+=("${image_array[$idx_val]}")
             fi
         done
         rm -rf "$tmpdir"
@@ -117,7 +115,11 @@ EOF
 
     log_info "镜像拉取完成: 成功 ${pulled}/${total}, 失败 ${failed}"
     if [[ $failed -gt 0 ]]; then
-        log_error "有 ${failed} 个镜像拉取失败"
+        log_error "有 ${failed} 个镜像拉取失败："
+        local image
+        for image in "${failed_images[@]}"; do
+            log_error "  ${image}"
+        done
         return 1
     fi
 }

@@ -1,6 +1,6 @@
 services:
   websockify:
-    image: ${IMAGE_ADDRESS}/websockify:1.0.0
+    image: ${WEBSOCKIFY_DOCKER_IMAGE}
     container_name: websockify
     ports:
       - "0.0.0.0:6080:6080"
