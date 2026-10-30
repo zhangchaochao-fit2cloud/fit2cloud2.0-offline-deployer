@@ -1,4 +1,5 @@
 #!/bin/bash
+# 库文件：被入口脚本 source 引入；错误处理(set -euo pipefail)由入口统一提供，勿在此单独添加
 
 # =============================================================================
 # Fit2Cloud 2.0 通用工具函数库
@@ -10,104 +11,64 @@ GREEN=$'\033[0;32m'
 YELLOW=$'\033[1;33m'
 BLUE=$'\033[0;34m'
 CYAN=$'\033[0;36m'
-NC=$'\033[0m' # No Color
+NC=$'\033[0m'
 
 # =============================================================================
 # 日志输出函数
 # =============================================================================
 
-
-function get_padding {
+get_padding() {
     export LC_ALL=en_US.UTF-8
     local msg=$1
     local total_width=70
-    # 非中文数量
     len1=$(echo "$msg" | grep -o '[^一-龥]' | wc -l)
-    # 中文数量
     len2=$(echo "$msg" | grep -o "[一-龥]" | wc -l)
-    # 中文x2 + 英文
     length=$(( len1 + len2 * 2 ))
-    # 计算出空格并填充
     printf -v padding '%*s' $(( total_width - length )) ''
 }
 
-# 内联信息日志
 log_info_inline() {
     local msg="$1"
     get_padding "$msg"
     echo -ne "${GREEN}[INFO] ${NC} $1 $padding"
 }
 
-# 步骤信息日志
-log_step_info() {
-    echo -e "${GREEN}$1${NC}"
-}
-
-# 信息日志
 log_info() {
     echo -e "${GREEN}[INFO] ${NC}$1"
 }
 
-# 标题信息日志
-log_title_info() {
-    echo -e "${GREEN}【$1】${NC}\n"
-}
-
-# 步骤警告日志
 log_step_warn() {
     echo -e "${YELLOW}$1${NC}"
 }
 
-# 警告日志
 log_warn() {
     echo -e "${YELLOW}[WARN] ${NC} $1"
 }
 
-# 步骤错误日志
 log_step_error() {
     echo -e "${RED}$1${NC}"
 }
 
-# 错误日志
 log_error() {
-    echo -e "${RED}[ERROR] ${NC} $1"
+    echo -e "${RED}[ERROR] ${NC} $1" >&2
 }
 
-# 步骤调试日志
-log_step_debug() {
-    if [[ "${DEBUG:-false}" == "true" ]]; then
-        echo -e "${CYAN}$1${NC}"
-    fi
-}
-
-# 调试日志
-log_debug() {
-    if [[ "${DEBUG:-false}" == "true" ]]; then
-        echo -e "${CYAN}[DEBUG] ${NC} $1"
-    fi
-}
-
-# 成功状态
 log_ok() {
-    echo -e "${CYAN}OK${NC} $1"
+    echo -e "${CYAN}OK${NC} ${1:-}"
 }
 
-# 步骤成功日志
 log_step_success() {
     echo -e "${CYAN}$1${NC} "
 }
 
-# 成功日志
 log_success() {
     echo -e "${CYAN}[SUCCESS]${NC} $1"
 }
 
-# 打印标题
 print_title() {
     echo -e "\n\n${CYAN}******************************\t $1 \t******************************${NC}\n"
 }
 
-# 打印子标题
 print_subtitle() {
     echo -e "\n${BLUE}------------------\t $1 \t------------------${NC}\n"
 }
@@ -116,25 +77,18 @@ print_subtitle() {
 # 环境变量处理函数
 # =============================================================================
 
-# 读取环境变量，支持默认值
-get_env() {
-    local var_name=$1
-    local default_value=$2
-    eval "echo \${$var_name:-$default_value}"
-}
-
-# 读取配置变量
 get_env_value() {
-    # 脚本目录
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local key="$1"
     local default_value="$2"
-    # env 环境变量文件
-    local env_file="${3:-$script_dir/../.env}"
+    local env_file="$3"
 
-    # 使用 grep 和 shell 字符串处理提取变量值（忽略注释和空行）
+    if [[ -z "$env_file" || ! -f "$env_file" ]]; then
+        echo "$default_value"
+        return
+    fi
+
     local value
-    value=$(grep -E "^$key=" "$env_file" | grep -v '^#' | head -n 1 | cut -d'=' -f2-)
+    value=$(grep -E "^$key=" "$env_file" 2>/dev/null | grep -v '^#' | head -n 1 | cut -d'=' -f2-)
 
     if [[ -n "$value" ]]; then
       echo "$value"
@@ -143,61 +97,152 @@ get_env_value() {
     fi
 }
 
-# 修改配置变量
 set_env_value() {
-    # 脚本目录
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local key="$1"
     local new_value="$2"
-    local env_file="${3:-$script_dir/../.env}"
+    local env_file="$3"
 
-    if grep -qE "^${key}=" "$env_file"; then
-        sed -i.bak -E "s|^(${key}=).*|\1${new_value}|" "$env_file"
+    if [[ -z "$env_file" ]]; then
+        log_error "set_env_value: 未指定 env_file"
+        return 1
+    fi
+
+    # 用 awk 重写而非 sed -i：GNU/BSD sed 的 -i 行为不一致，且值可能含 & / \ 等特殊字符
+    if grep -qE "^${key}=" "$env_file" 2>/dev/null; then
+        CE_SEV_KEY="$key" CE_SEV_VAL="$new_value" awk '
+            $0 ~ "^" ENVIRON["CE_SEV_KEY"] "=" {
+                if (!done) { print ENVIRON["CE_SEV_KEY"] "=" ENVIRON["CE_SEV_VAL"]; done = 1 }
+                next
+            }
+            { print }
+            END { if (!done) print ENVIRON["CE_SEV_KEY"] "=" ENVIRON["CE_SEV_VAL"] }
+        ' "$env_file" > "${env_file}.tmp.$$" && mv "${env_file}.tmp.$$" "$env_file"
     else
         echo "${key}=${new_value}" >> "$env_file"
     fi
 }
 
-# 检查必需的环境变量
-check_required_env() {
-    local var_name=$1
-    local value=$(get_env "$var_name")
-    if [[ -z "$value" ]]; then
-        log_error "必需的环境变量 $var_name 未设置"
-        exit 1
-    fi
-    echo "$value"
+# 合并多个 env 文件为单个输出文件：键唯一化，同名键以后面的文件为准（后文件覆盖前文件）。
+# 用途：安装时把 runtime.env（运行变量）+ install.env（安装变量）+ .env（打包变量）
+# 合并生成 <安装目录>/fit2cloud/.env —— 运行期唯一契约，f2cctl/compose/重渲染只读它。
+merge_env_files() {
+    local out_file="$1"
+    shift
+
+    local merged
+    merged=$(awk '
+        /^[A-Za-z_][A-Za-z0-9_]*=/ {
+            key = $0; sub(/=.*/, "", key)
+            if (!(key in seen)) { seen[key] = 1; order[++n] = key }
+            value[key] = $0
+        }
+        END { for (i = 1; i <= n; i++) print value[order[i]] }
+    ' "$@" 2>/dev/null)
+
+    {
+        echo "# 本文件由安装脚本自动生成（runtime.env + install.env + 打包 .env 合并）"
+        echo "# 如需修改配置，请编辑 install.env / runtime.env 后重新安装或升级"
+        echo "# 手动改动会在下次安装/升级时被覆盖"
+        [[ -n "$merged" ]] && { echo ""; echo "$merged"; }
+    } > "$out_file"
 }
 
-# 导出环境变量到文件
-export_env_to_file() {
-    local file_path=$1
-    local var_name=$2
-    local var_value=$3
-    echo "$var_name=$var_value" >> "$file_path"
+# =============================================================================
+# 中间件通用函数
+# =============================================================================
+
+mw_init() {
+    local caller="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"
+    MW_SCRIPT_DIR="$(cd "$(dirname "$caller")" && pwd)"
+    MW_BASE_DIR="$(cd "$MW_SCRIPT_DIR/.." && pwd)"
+    ENV_FILE="$MW_BASE_DIR/../.env"
+}
+
+mw_is_external() {
+    local external_key="$1"
+    local external=$(get_env_value "$external_key" "false" "$ENV_FILE")
+    [[ "$external" == "true" ]]
+}
+
+mw_check_external() {
+    local name="$1"
+    local external_key="$2"
+    local host="$3"
+    local port="$4"
+
+    if mw_is_external "$external_key"; then
+        log_info "$name: 外部 ($host:$port)"
+        return 0
+    else
+        log_info "$name: 内置"
+        return 1
+    fi
+}
+
+mw_check_url() {
+    local url="$1"
+    curl -sf "$url" &>/dev/null
+}
+
+mw_skip_install() {
+    local name="$1"
+    local external_key="$2"
+
+    if mw_is_external "$external_key"; then
+        log_info "$name: 使用外部，跳过安装"
+        return 0
+    fi
+    log_info "$name: 由 Docker Compose 管理，无需单独安装"
+}
+
+mw_skip_configure() {
+    local name="$1"
+    local external_key="$2"
+
+    if mw_is_external "$external_key"; then
+        return 0
+    fi
+}
+
+mw_set_permissions() {
+    local name="$1"
+    local path="$2"
+
+    if [[ -f "$path" ]]; then
+        chmod 600 "$path"
+        log_info "$name 配置权限已设为 600"
+    elif [[ -d "$path" ]]; then
+        find "$path" -maxdepth 1 -exec chmod 600 {} + 2>/dev/null || true
+        log_info "$name 配置权限已设为 600"
+    fi
 }
 
 # =============================================================================
 # 通用函数
 # =============================================================================
 
-# 检查命令是否存在
 cmd_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# 获取系统IP地址
-get_system_ip() {
-    ip route get 1 | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p'
+get_local_ip() {
+    ip route get 1 2>/dev/null | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p'
 }
 
-# 安全执行命令
+ensure_dir() {
+    local dir_path=$1
+    if [[ ! -d "$dir_path" ]]; then
+        mkdir -p "$dir_path"
+        log_info "创建目录: $dir_path"
+    fi
+}
+
 safe_execute() {
-    local cmd="$1"
-    local msg="$2"
+    local msg="$1"
+    shift
 
     log_info_inline "$msg..."
-    if ! eval "$cmd" >>"$INSTALL_LOG" 2>&1; then
+    if ! "$@" >>"${INSTALL_LOG:-/dev/null}" 2>&1; then
         log_step_error "执行失败"
         return 1
     fi
@@ -205,139 +250,69 @@ safe_execute() {
     return 0
 }
 
-
 download_file() {
     local url="$1"
     local output="$2"
-    # 默认使用 wget
-    if cmd_exists wget; then
-        # 测试 wget 是否支持 --show-progress
-        if wget --help 2>&1 | grep -q -- '--show-progress'; then
-            wget --quiet --show-progress --progress=bar:force -O "$output" "$url"
-        else
-            if cmd_exists curl; then
-                echo "Downloading $output ..."
-                if curl -L --progress-bar -o "$output" "$url"; then
-                    echo "Download finished"
-                else
-                    echo "Download failed: $url"
-                    exit 1
-                fi
-            else
-                wget --quiet --progress=bar:force -O "$output" "$url"
-            fi
-        fi
+
+    if cmd_exists curl; then
+        curl -L --progress-bar -f -o "$output" "$url"
+    elif cmd_exists wget; then
+        wget -q --show-progress -O "$output" "$url"
     else
-        echo "Error: neither wget nor curl is installed." >&2
+        log_error "wget 和 curl 都未安装"
         return 1
     fi
 }
 
-# # =============================================================================
-# # Docker 相关函数
-# # =============================================================================
+# =============================================================================
+# 文件操作函数
+# =============================================================================
 
-# # 启动 Docker 服务
-# docker_start() {
-#     log_info "启动 Docker 服务..."
-#     if systemctl is-active --quiet docker; then
-#         log_info "Docker 服务已在运行"
-#     else
-#         systemctl start docker
-#         systemctl enable docker
-#         log_info "Docker 服务启动完成"
-#     fi
-# }
+calculate_md5() {
+    local file=$1
+    local md5_file="${file}.md5"
 
-# # 运行 Docker 容器
-# docker_run() {
-#     local image=$1
-#     local name=$2
-#     shift 2
-#     local args="$@"
-    
-#     log_info "启动容器: $name (镜像: $image)"
-#     docker run --name "$name" $args "$image"
-# }
-
-# # 使用 docker-compose 启动服务
-# docker_compose_up() {
-#     local compose_file=$1
-#     local service_name=${2:-""}
-    
-#     log_info "使用 docker-compose 启动服务: $compose_file"
-#     if [[ -n "$service_name" ]]; then
-#         docker-compose -f "$compose_file" up -d --no-recreate "$service_name"
-#     else
-#         docker-compose -f "$compose_file" up -d
-#     fi
-# }
-
-# # 检查容器健康状态
-# docker_check_health() {
-#     local container_name=$1
-#     local max_wait_time=${2:-120}
-#     local wait_interval=${3:-5}
-#     local elapsed_time=0
-    
-#     log_info "等待容器 $container_name 健康状态..."
-    
-#     while [[ "$elapsed_time" -lt "$max_wait_time" ]]; do
-#         local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null)
-#         if [[ "$health_status" == "healthy" ]]; then
-#             log_info "容器 $container_name 已健康"
-#             return 0
-#         fi
-#         sleep "$wait_interval"
-#         elapsed_time=$((elapsed_time + wait_interval))
-#     done
-    
-#     log_error "容器 $container_name 健康检查超时"
-#     return 1
-# }
+    if [[ -f "$file" ]]; then
+        md5sum "$file" > "$md5_file"
+        log_info "MD5 计算完成: $md5_file"
+        echo "$md5_file"
+    else
+        log_error "文件不存在: $file"
+        return 1
+    fi
+}
 
 # =============================================================================
 # 端口检测函数
 # =============================================================================
 
-# 验证文件是否存在
-check_number() {
-    local number="$1"
-    if [[ ! "$number" =~ ^[0-9]+$ ]]; then
-      return 1
-    fi
-
-    return 0
-}
-
-# 检查端口是否被占用
 check_port() {
     local port=$1
-    local record=0
-    local not_found_tool=0
-    
+
+    if [[ -z "$port" ]]; then
+        return 0
+    fi
+
     log_info_inline "检查端口 $port 占用..."
 
-    if ! check_number $port; then
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
         log_step_error "必须为数字"
         return 1
     fi
-    
+
+    local record=0
     if cmd_exists lsof; then
-        record=$(lsof -i:$port | grep LISTEN | wc -l)
+        record=$(lsof -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | wc -l)
     elif cmd_exists netstat; then
-        record=$(netstat -nplt | awk -F' ' '{print $4}' | grep "^[[:graph:]]*:$port$" | wc -l)
+        record=$(netstat -tnl 2>/dev/null | awk '{print $4}' | grep -cE "[:.]$port$") || true
     elif cmd_exists ss; then
-        record=$(ss -nlt | awk -F' ' '{print $4}' | grep "^[[:graph:]]*:$port$" | wc -l)
+        record=$(ss -tnl 2>/dev/null | awk '{print $4}' | grep -cE "[:.]$port$") || true
     else
-        not_found_tool=1
+        log_step_warn "未找到检测工具 (lsof/netstat/ss)，跳过端口检测"
+        return 0
     fi
-    
+
     if [[ "$record" -eq "0" ]]; then
-        if [[ "$not_found_tool" -eq "1" ]]; then
-            log_step_warn "未找到检测工具 (lsof/netstat/ss)，跳过端口检测"
-            return 0
-        fi
         log_ok
         return 0
     else
@@ -346,193 +321,41 @@ check_port() {
     fi
 }
 
-# 检查端口并返回结果
-check_port_with_result() {
-    local port=$1
-    local record=0
-    
-    if command -v lsof &> /dev/null; then
-        record=$(lsof -i:$port | grep LISTEN | wc -l)
-    elif command -v netstat &> /dev/null; then
-        record=$(netstat -nplt | awk -F' ' '{print $4}' | grep "^[[:graph:]]*:$port$" | wc -l)
-    elif command -v ss &> /dev/null; then
-        record=$(ss -nlt | awk -F' ' '{print $4}' | grep "^[[:graph:]]*:$port$" | wc -l)
-    fi
-    
-    echo "$record"
-}
-
 # =============================================================================
 # 系统检测函数
 # =============================================================================
 
-# 获取本机IP地址
-get_local_ip() {
-    ip route get 1 | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p'
-}
+get_os() {
+    local os="unknown"
 
-# 获取所有网卡IP
-get_all_ips() {
-    ip route get 1 | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p' | tr '\n' ' '
-}
-
-# =============================================================================
-# 防火墙操作函数
-# =============================================================================
-
-# 开放防火墙端口
-open_firewall_port() {
-    local port=$1
-    local protocol=${2:-"tcp"}
-    
-    log_info "开放防火墙端口: $port/$protocol"
-    
-    if systemctl is-active --quiet firewalld; then
-        firewall-cmd --permanent --add-port="$port/$protocol" >/dev/null 2>&1
-        firewall-cmd --reload >/dev/null 2>&1
-        log_info "防火墙端口开放成功"
-    elif command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
-        ufw allow "$port/$protocol" >/dev/null 2>&1
-        log_info "UFW 端口开放成功"
-    else
-        log_warn "未检测到活跃的防火墙服务，请手动开放端口 $port"
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        case "$ID" in
+            ubuntu)       os="ubuntu" ;;
+            openEuler)    os="openEuler" ;;
+            kylin)        os="kylin" ;;
+            centos|rhel|rocky|alma) os="$ID" ;;
+            *)            os="$ID" ;;
+        esac
+    elif [[ -f /etc/redhat-release ]]; then
+        os="redhat"
     fi
+
+    echo "$os"
 }
 
-# =============================================================================
-# 服务管理函数
-# =============================================================================
+get_os_version() {
+    local os=$(get_os)
+    local major_version="unknown"
 
-# 启动系统服务
-start_service() {
-    local service_name=$1
-    log_info "启动服务: $service_name"
-    
-    if systemctl is-active --quiet "$service_name"; then
-        log_info "服务 $service_name 已在运行"
-    else
-        systemctl start "$service_name"
-        systemctl enable "$service_name"
-        log_info "服务 $service_name 启动完成"
+    if [[ -f /etc/redhat-release ]] && [[ "$os" =~ ^(centos|rhel|rocky|alma|redhat)$ ]]; then
+        major_version=$(awk '{print $3}' /etc/redhat-release | cut -d. -f1)
+    elif [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        major_version=$(echo "$VERSION_ID" | cut -d. -f1)
     fi
-}
 
-# 检查服务状态
-check_service_status() {
-    local service_name=$1
-    local status=$(systemctl is-active "$service_name")
-    
-    if [[ "$status" == "active" ]]; then
-        log_info "服务 $service_name 运行正常"
-        return 0
-    else
-        log_error "服务 $service_name 状态异常: $status"
-        return 1
-    fi
-}
-
-# =============================================================================
-# 中间件连接检测函数
-# =============================================================================
-
-# 检测 MySQL 连接
-check_mysql_connection() {
-    local host=${1:-"localhost"}
-    local port=${2:-"3306"}
-    local user=${3:-"root"}
-    local password=${4:-""}
-    
-    log_info "检测 MySQL 连接: $host:$port"
-    
-    if command -v mysql &> /dev/null; then
-        if [[ -n "$password" ]]; then
-            mysql -h"$host" -P"$port" -u"$user" -p"$password" -e "SELECT 1;" >/dev/null 2>&1
-        else
-            mysql -h"$host" -P"$port" -u"$user" -e "SELECT 1;" >/dev/null 2>&1
-        fi
-        
-        if [[ $? -eq 0 ]]; then
-            log_info "MySQL 连接成功"
-            return 0
-        fi
-    fi
-    
-    log_error "MySQL 连接失败"
-    return 1
-}
-
-# 检测 Redis 连接
-check_redis_connection() {
-    local host=${1:-"localhost"}
-    local port=${2:-"6379"}
-    local password=${3:-""}
-    
-    log_info "检测 Redis 连接: $host:$port"
-    
-    if command -v redis-cli &> /dev/null; then
-        if [[ -n "$password" ]]; then
-            redis-cli -h "$host" -p "$port" -a "$password" ping >/dev/null 2>&1
-        else
-            redis-cli -h "$host" -p "$port" ping >/dev/null 2>&1
-        fi
-        
-        if [[ $? -eq 0 ]]; then
-            log_info "Redis 连接成功"
-            return 0
-        fi
-    fi
-    
-    log_error "Redis 连接失败"
-    return 1
-}
-
-# =============================================================================
-# 配置生成函数
-# =============================================================================
-
-# 生成配置文件
-generate_config() {
-    local template_file=$1
-    local output_file=$2
-    shift 2
-    local replacements="$@"
-    
-    log_info "生成配置文件: $output_file"
-    
-    if [[ -f "$template_file" ]]; then
-        cp "$template_file" "$output_file"
-        
-        # 执行替换
-        for replacement in $replacements; do
-            local key=$(echo "$replacement" | cut -d'=' -f1)
-            local value=$(echo "$replacement" | cut -d'=' -f2-)
-            sed -i "s#${key}#${value}#g" "$output_file"
-        done
-        
-        log_info "配置文件生成完成"
-    else
-        log_error "模板文件不存在: $template_file"
-        return 1
-    fi
-}
-
-# 验证文件是否存在
-check_required_files() {
-    local files="$@"
-    local missing_files=""
-    
-    for file in $files; do
-        if [[ ! -f "$file" ]]; then
-            missing_files="$missing_files $file"
-        fi
-    done
-    
-    if [[ -n "$missing_files" ]]; then
-        log_error "缺少必需的文件: $missing_files"
-        return 1
-    fi
-    
-    return 0
+    echo "$major_version"
 }
 
 read_with_default() {
@@ -540,12 +363,11 @@ read_with_default() {
     local default="$2"
     local input
 
-    if [[ "$SILENT_MODE" == "true" ]]; then
-        # 静默模式直接返回默认值
+    if [[ "${SILENT_MODE:-false}" == "true" ]]; then
         echo "$prompt [$default]: " >&2
         echo "$default"
         return
     fi
-    read -p "$prompt [$default]: " input
+    read -r -p "$prompt [$default]: " input
     echo "${input:-$default}"
 }

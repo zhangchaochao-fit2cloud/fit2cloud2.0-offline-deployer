@@ -1,105 +1,105 @@
 #!/bin/bash
-extension_file=$1
 
-if [ "x$extension_file" == "x" ]; then
-  echo "升级扩展模块 : fit2cloud-upgrade-extension [FILE]"
-  echo
-  echo "示例 : fit2cloud-upgrade-extension /tmp/fit2cloud-extension.tar.gz"
-  exit 1;
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FIT2CLOUD_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+source "$FIT2CLOUD_DIR/scripts/common.sh"
+source "$FIT2CLOUD_DIR/scripts/docker.sh"
+source "$FIT2CLOUD_DIR/scripts/service.sh"
+
+ENV_FILE="$FIT2CLOUD_DIR/.env"
+WORK_DIR=$(get_env_value CE_INSTALL_PATH "/opt" "$ENV_FILE")
+WORK_DIR="$WORK_DIR/fit2cloud"
+
+extension_file="${1:-}"
+if [[ -z "$extension_file" ]]; then
+    echo "用法: fit2cloud-upgrade-extension <FILE>"
+    exit 1
 fi
 
-red=31
-green=32
-yellow=33
-blue=34
+if [[ ! -f "$extension_file" ]]; then
+    echo "文件不存在: $extension_file"
+    exit 1
+fi
 
-function colorMsg()
-{
-  echo -e "\033[$1m $2 \033[0m"
-}
-
-upgradeLog="/tmp/fit2cloud-extension-upgrade.log"
-fit2cloud_dir="/opt/fit2cloud"
-fit2cloud_conf_dir="$fit2cloud_dir/conf/"
-extension_dir="$fit2cloud_dir/extensions"
-
-random_dir_name=`cat /dev/urandom | head -n 10 | md5sum | head -c 10`
-tmp_dir="/tmp/f2c-extensions/$random_dir_name"
+EXTENSION_DIR="$WORK_DIR/extensions"
+tmp_dir="/tmp/f2c-extensions/$(date +%s)"
 extension_tmp_dir="$tmp_dir/extension"
+ensure_dir "$tmp_dir"
 
-if [ ! -d "$tmp_dir" ]; then
-  mkdir -p $tmp_dir
+log_info "解压扩展模块..."
+tar zxf "$extension_file" -C "$tmp_dir"
+
+compose_file="$extension_tmp_dir/docker-compose.yml"
+if [[ ! -f "$compose_file" ]]; then
+    log_error "模块缺少 docker-compose.yml"
+    rm -rf "$tmp_dir"
+    exit 1
 fi
 
-printf "%-65s .......... " "解压扩展模块安装包"
-tar zxvf $extension_file -C $tmp_dir >> $upgradeLog 2>&1
-colorMsg $green "[OK]"
+image_address=$(get_env_value IMAGE_ADDRESS "registry.fit2cloud.com/north" "$ENV_FILE")
+sed -i "s#registry.fit2cloud.com/north#${image_address}#g" "$compose_file"
 
-for module_name in $(cat $extension_tmp_dir/docker-compose.yml | grep "container_name" | awk -F "container_name: " '{print $NF}'); do
-  if [ ! "$service_name" ]; then
-    service_name=$module_name
-  fi
-  module_name_list="$module_name_list $module_name"
-done
-
-extension_name=`grep "image:" $extension_tmp_dir/docker-compose.yml | awk -F "/" '{print $NF}' | awk -F: '{print $1}' | head -n 1`
-fit2cloud_extention_folder="$extension_dir/$extension_name"
-if [ ! -d "$fit2cloud_extention_folder" ]; then
-  colorMsg $red "未找到指定扩展模块对应的扩展目录"
-  exit 1;
-fi
-
-for server_image in $(ls $extension_tmp_dir/*.tar); do
-  printf "%-65s .......... " "升级扩展模块镜像 : $server_image"
-  docker load -q -i $server_image >> $upgradeLog 2>&1
-  colorMsg $green "[OK]"
-done
-
-printf "%-65s .......... " "停止原有服务 : $module_name_list"
-docker-compose -f $fit2cloud_dir/docker-compose.yml -f $fit2cloud_extention_folder/docker-compose.yml rm -sf $module_name_list >> $upgradeLog 2>&1
-colorMsg $green "[OK]"
-
-printf "%-65s .......... " "删除无用镜像 : $service_name"
-invalid_images=`docker images -f "dangling=true" -q`
-for s in ${invalid_images[@]}; do
-  docker rmi -f ${s} >> $upgradeLog 2>&1
-done
-colorMsg $green "[OK]"
-
-printf "%-65s .......... " "升级扩展模块 : $service_name"
-\cp -f $fit2cloud_extention_folder/docker-compose.yml $fit2cloud_extention_folder/docker-compose.yml.bak
-\cp -f $extension_tmp_dir/docker-compose.yml $fit2cloud_extention_folder
-colorMsg $green "[OK]"
-
-extention_tmp_upgrade_script="$extension_tmp_dir/scripts/upgrade.sh"
-if [ -f $extention_tmp_upgrade_script ]; then
-  printf "%-65s .......... " "执行扩展模块初始化升级脚本 : $extention_tmp_upgrade_script"
-  bash $extention_tmp_upgrade_script
-  colorMsg $green "[OK]"
-fi
-
-printf "%-65s .......... " "启动扩展模块 : $service_name"
-docker_compose_file_args="-f $fit2cloud_dir/docker-compose.yml"
-for extension in $(ls $extension_dir); do
-  current_extension_dir="$extension_dir/$extension"
-  if [ ! -d $current_extension_dir ]; then
-    continue
-  fi
-
-  for extension_file_name in $(ls $current_extension_dir); do
-    extension_file="$current_extension_dir/$extension_file_name"
-    if [ ! -f $extension_file ]; then
-      continue
+service_name=""
+module_names=""
+# shellcheck disable=SC2013  # 容器名列表有意按空白展开
+for module_name in $(grep "container_name" "$compose_file" | awk -F "container_name: " '{print $NF}'); do
+    module_names="$module_names $module_name"
+    if [[ -z "$service_name" ]]; then
+        service_name="$module_name"
     fi
-
-    if [ "$extension_file_name" == "docker-compose.yml" ]; then
-      docker_compose_file_args="$docker_compose_file_args -f $extension_file"
-    fi
-  done
 done
-docker-compose $docker_compose_file_args up --no-recreate -d $module_name_list >> $upgradeLog 2>&1
-colorMsg $green "[OK]"
 
-printf "%-65s .......... " "清理临时升级文件 : $service_name"
-rm -rf $tmp_dir  >> $upgradeLog 2>&1
-colorMsg $green "[OK]" 
+module_dir="$EXTENSION_DIR/$service_name"
+if [[ ! -d "$module_dir" ]]; then
+    log_error "未找到扩展模块目录: $module_dir"
+    rm -rf "$tmp_dir"
+    exit 1
+fi
+
+for image_file in "$extension_tmp_dir"/*.tar; do
+    [[ ! -f "$image_file" ]] && continue
+    log_info_inline "加载镜像 $(basename "$image_file")"
+    docker load -qi "$image_file"
+    log_ok
+done
+
+log_info "停止原有服务: $module_names..."
+compose_args=$(get_compose_files "$WORK_DIR" "$ENV_FILE")
+if [[ -f "$module_dir/docker-compose.yml" ]]; then
+    compose_args="$compose_args -f $module_dir/docker-compose.yml"
+fi
+compose_exe=$(get_docker_compose_exe "$ENV_FILE")
+# shellcheck disable=SC2086  # compose_args/module_names 有意按空白展开
+$compose_exe $compose_args rm -sf $module_names 2>/dev/null || true
+
+docker image prune -f &>/dev/null || true
+
+log_info "升级扩展模块: $service_name"
+cp -f "$module_dir/docker-compose.yml" "$module_dir/docker-compose.yml.bak"
+cp -f "$compose_file" "$module_dir/"
+
+ext_conf="$extension_tmp_dir/conf"
+module_conf="$WORK_DIR/conf/$service_name"
+if [[ -d "$ext_conf" ]]; then
+    ensure_dir "$module_conf"
+    cp -rf "$ext_conf/"* "$module_conf/"
+fi
+
+ext_upgrade_script="$extension_tmp_dir/scripts/upgrade.sh"
+if [[ -f "$ext_upgrade_script" ]]; then
+    bash "$ext_upgrade_script" --install_dir "$module_conf" --work_dir "$WORK_DIR"
+fi
+
+log_info "启动扩展模块: $service_name..."
+compose_args=$(get_compose_files "$WORK_DIR" "$ENV_FILE")
+if [[ -f "$module_dir/docker-compose.yml" ]]; then
+    compose_args="$compose_args -f $module_dir/docker-compose.yml"
+fi
+compose_exe=$(get_docker_compose_exe "$ENV_FILE")
+$compose_exe $compose_args up --no-recreate -d $module_names
+
+rm -rf "$tmp_dir"
+log_success "扩展模块升级完成: $service_name"

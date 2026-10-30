@@ -1,5 +1,6 @@
 services:
   management-center:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/management-center:${VERSION}
     container_name: management-center
     restart: always
@@ -17,6 +18,7 @@ services:
       - cmp-network
 
   gateway:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/gateway:${VERSION}
     container_name: gateway
     restart: always
@@ -30,6 +32,7 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+        required: false
     mem_limit: 2048m
     logging:
       driver: "json-file"
@@ -40,6 +43,7 @@ services:
       - cmp-network
 
   dashboard:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/dashboard:${VERSION}
     container_name: dashboard
     restart: always
@@ -59,6 +63,7 @@ services:
       - cmp-network
 
   vm-service:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/vm-service:${VERSION}
     container_name: vm-service
     restart: always
@@ -80,6 +85,7 @@ services:
       - cmp-network
 
   operation-analytics:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/operation-analytics:${VERSION}
     container_name: operation-analytics
     restart: always
@@ -100,6 +106,7 @@ services:
       - cmp-network
 
   screen-display:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/screen-display:${VERSION}
     container_name: screen-display
     restart: always
@@ -120,6 +127,7 @@ services:
       - cmp-network
 
   billing-center:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/billing-center:${VERSION}
     container_name: billing-center
     restart: always
@@ -140,6 +148,7 @@ services:
       - cmp-network
 
   orchestrator-service:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/orche:${VERSION}
     container_name: orchestrator-service
     restart: always
@@ -161,6 +170,7 @@ services:
       - cmp-network
 
   cloud-worker:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/cloud-worker:${VERSION}
     container_name: cloud-worker
     restart: always
@@ -181,6 +191,7 @@ services:
       - cmp-network
 
   message-worker:
+    profiles: ["standard"]
     image: ${IMAGE_ADDRESS}/message-worker:${VERSION}
     container_name: message-worker
     restart: always
@@ -200,50 +211,33 @@ services:
     networks:
       - cmp-network
 
-  keycloak:
-    image: ${IMAGE_ADDRESS}/keycloak:${VERSION}
-    container_name: keycloak
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "25M"
-        max-file: "4"
-    env_file:
-      - ${CE_INSTALL_PATH}/fit2cloud/conf/keycloak/keycloak.properties
-    ports:
-      - "0.0.0.0:8080:8080"
-      - "0.0.0.0:7600:7600"
-    command:
-      - -b 0.0.0.0 -Dkeycloak.import=/opt/fit2cloud/conf/cmp-realm.json
-    volumes:
-      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
-      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
-    mem_limit: 4096m
-    networks:
-      - cmp-network
+networks:
+  cmp-network:
+    external: true
 
-  ansible:
-    image: ${IMAGE_ADDRESS}/ansible-api:${VERSION}
-    container_name: ansible
-    restart: always
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1" ]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-      start_period: 360s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "25M"
-        max-file: "4"
-    env_file:
-      - ${CE_INSTALL_PATH}/fit2cloud/conf/redis/redis.env
-    mem_limit: 2048m
-    volumes:
-      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
-      - host-opt-fit2cloud-git:/opt/fit2cloud/git
-      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
-    networks:
-      - cmp-network
+volumes:
+  share-volume:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/data/plugins
+      o: bind
+  host-opt-fit2cloud-conf:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/conf
+      o: bind
+  host-opt-fit2cloud-logs:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/logs
+      o: bind
+  host-opt-fit2cloud-git:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/git
+      o: bind
+  host-opt-fit2cloud-sftp-upload:
+    driver_opts:
+      type: none
+      device: ${CE_INSTALL_PATH}/fit2cloud/sftp/sftpuser/upload
+      o: bind

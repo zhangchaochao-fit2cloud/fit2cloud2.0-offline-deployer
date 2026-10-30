@@ -4,8 +4,8 @@ services:
     container_name: rabbitmq
     restart: always
     environment:
-      - RABBITMQ_DEFAULT_USER=fit2cloud
-      - RABBITMQ_DEFAULT_PASS=Password123@rabbitmq
+      - RABBITMQ_DEFAULT_USER=${CE_RABBITMQ_USER:-fit2cloud}
+      - RABBITMQ_DEFAULT_PASS=${CE_RABBITMQ_PASSWORD}
     ports:
       - "15672:15672"
       - "5672:5672"
@@ -20,4 +20,5 @@ services:
     networks:
       - cmp-network
 networks:
-  cmp-network: 
+  cmp-network:
+    external: true

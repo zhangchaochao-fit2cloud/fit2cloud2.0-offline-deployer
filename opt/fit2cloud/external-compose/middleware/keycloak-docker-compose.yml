@@ -1,0 +1,33 @@
+services:
+  keycloak:
+    image: ${IMAGE_ADDRESS}/keycloak:${VERSION}
+    container_name: keycloak
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    env_file:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/keycloak/keycloak.properties
+    ports:
+      - "0.0.0.0:${CE_KEYCLOAK_PORT:-8080}:8080"
+      - "0.0.0.0:${CE_KEYCLOAK_CLUSTER_PORT:-7600}:7600"
+    command:
+      - -b 0.0.0.0 -Dkeycloak.import=/opt/fit2cloud/conf/cmp-realm.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/auth/"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    volumes:
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+    mem_limit: 4096m
+    networks:
+      - cmp-network
+
+networks:
+  cmp-network:
+    external: true

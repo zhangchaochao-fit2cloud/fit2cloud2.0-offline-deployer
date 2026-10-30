@@ -6,29 +6,74 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
+	"os"
+	"sync"
 )
 
-var encryptionKey = []byte("your-32-byte-encryption-key") // 应从安全位置获取
+var (
+	encryptionKeyOnce sync.Once
+	encryptionKey     []byte
+	encryptionKeyErr  error
+)
 
-// Encrypt 示例加密函数(生产环境应使用KMS等专业方案)
-func Encrypt(plaintext string) string {
-	block, _ := aes.NewCipher(encryptionKey)
-	gcm, _ := cipher.NewGCM(block)
-	nonce := make([]byte, gcm.NonceSize())
-	io.ReadFull(rand.Reader, nonce)
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext)
+func getEncryptionKey() ([]byte, error) {
+	encryptionKeyOnce.Do(func() {
+		key := os.Getenv("CE_ENCRYPTION_KEY")
+		if key == "" {
+			encryptionKeyErr = fmt.Errorf("CE_ENCRYPTION_KEY environment variable is required for encryption/decryption")
+			return
+		}
+		keyBytes := []byte(key)
+		if len(keyBytes) < 32 {
+			padded := make([]byte, 32)
+			copy(padded, keyBytes)
+			keyBytes = padded
+		}
+		if len(keyBytes) > 32 {
+			keyBytes = keyBytes[:32]
+		}
+		encryptionKey = keyBytes
+	})
+	return encryptionKey, encryptionKeyErr
 }
 
-// Decrypt 示例解密函数
+func Encrypt(plaintext string) (string, error) {
+	key, err := getEncryptionKey()
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
 func Decrypt(ciphertext string) (string, error) {
+	key, err := getEncryptionKey()
+	if err != nil {
+		return "", err
+	}
 	data, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
 		return "", err
 	}
 
-	block, err := aes.NewCipher(encryptionKey)
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -39,7 +84,7 @@ func Decrypt(ciphertext string) (string, error) {
 	}
 
 	if len(data) < gcm.NonceSize() {
-		return "", errors.New("invalid ciphertext")
+		return "", errors.New("invalid ciphertext: too short")
 	}
 
 	nonce, data := data[:gcm.NonceSize()], data[gcm.NonceSize():]

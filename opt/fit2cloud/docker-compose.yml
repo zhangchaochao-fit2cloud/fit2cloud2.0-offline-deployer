@@ -56,12 +56,12 @@ services:
 
   keycloak:
     extends:
-      file: ./external-compose/base-docker-compose.yml
+      file: ./external-compose/middleware/keycloak-docker-compose.yml
       service: keycloak
 
   ansible:
     extends:
-      file: ./external-compose/base-docker-compose.yml
+      file: ./external-compose/middleware/ansible-docker-compose.yml
       service: ansible
 
 volumes:
@@ -85,11 +85,6 @@ volumes:
       type: none
       device: ${CE_INSTALL_PATH}/fit2cloud/sftp/sftpuser/upload
       o: bind
-  host-opt-fit2cloud-upload:
-    driver_opts:
-      type: none
-      device: ${CE_INSTALL_PATH}/fit2cloud/data/upload
-      o: bind
   share-volume:
     driver_opts:
       type: none
@@ -98,3 +93,4 @@ volumes:
 
 networks:
   cmp-network:
+    external: true

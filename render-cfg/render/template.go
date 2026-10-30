@@ -1,8 +1,8 @@
 package render
 
 import (
+	crypto_rand "crypto/rand"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,16 +28,16 @@ type Config struct {
 func NewEngine(cfg *Config) *Engine {
 	e := &Engine{cfg: cfg}
 	e.initFuncMap()
-
-	// 发现模板文件
 	e.discoverTemplates()
 	return e
 }
 
-// 自动发现模板文件(.tmpl/.tpl)
 func (e *Engine) discoverTemplates() {
 	filepath.Walk(e.cfg.TemplateDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
 			return nil
 		}
 
@@ -49,10 +49,9 @@ func (e *Engine) discoverTemplates() {
 	})
 }
 
-// Run 渲染所有模板
 func (e *Engine) Run(envData map[string]interface{}) error {
 	for _, tmplPath := range e.templates {
-		content, err := ioutil.ReadFile(tmplPath)
+		content, err := os.ReadFile(tmplPath)
 		if err != nil {
 			return fmt.Errorf("读取模板 %s 失败: %v", tmplPath, err)
 		}
@@ -62,52 +61,37 @@ func (e *Engine) Run(envData map[string]interface{}) error {
 			mode = "zero"
 		}
 
-		// 执行渲染
 		tmpl := template.Must(
 			template.New(filepath.Base(tmplPath)).
 				Funcs(e.funcMap).
-				Option("missingkey=" + mode).
+				Option("missingkey="+mode).
 				Parse(string(content)),
 		)
 
 		var buf strings.Builder
 		if err := tmpl.Execute(&buf, envData); err != nil {
-			return fmt.Errorf("渲染模板 %s 失败: %v", tmplPath, err)
+			return fmt.Errorf("渲染模板 %s 失败: %v", filepath.Base(tmplPath), err)
 		}
 
-		// 写入输出文件(去除模板后缀)
-		outputPath := filepath.Join(e.cfg.OutputDir, strings.TrimSuffix(filepath.Base(tmplPath), filepath.Ext(tmplPath)))
+	relPath, err := filepath.Rel(e.cfg.TemplateDir, tmplPath)
+	if err != nil {
+		return fmt.Errorf("计算相对路径失败: %v", err)
+	}
+	outputName := strings.TrimSuffix(relPath, filepath.Ext(relPath))
+	outputPath := filepath.Join(e.cfg.OutputDir, outputName)
 		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 			return err
 		}
-		if err := ioutil.WriteFile(outputPath, []byte(buf.String()), 0644); err != nil {
+		if err := os.WriteFile(outputPath, []byte(buf.String()), 0644); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// 自定义函数: 条件加密
-func (e *Engine) encryptIfNeeded(key string, val interface{}) (string, error) {
-	s, ok := val.(string)
-	if !ok {
-		return "", fmt.Errorf("加密值必须是字符串")
-	}
-
-	// 检查是否需要加密
-	for _, suffix := range e.cfg.EncryptKeys {
-		if strings.HasSuffix(key, suffix) {
-			return Encrypt(s), nil // 调用加密逻辑
-		}
-	}
-	return s, nil
-}
-
-// 初始化模板函数
 func (e *Engine) initFuncMap() {
 	e.funcMap = sprig.TxtFuncMap()
 
-	// 自定义函数
 	e.funcMap["isset"] = func(m map[string]interface{}, key string) bool {
 		_, ok := m[key]
 		return ok
@@ -125,9 +109,26 @@ func (e *Engine) initFuncMap() {
 		return input
 	}
 
-	e.funcMap["required"] = func(val interface{}) (interface{}, error) {
+	e.funcMap["required"] = func(args ...interface{}) (interface{}, error) {
+		var msg string
+		var val interface{}
+		switch len(args) {
+		case 1:
+			val = args[0]
+		case 2:
+			m, ok := args[0].(string)
+			if !ok {
+				return nil, fmt.Errorf("required: 第一个参数必须是字符串提示信息")
+			}
+			msg, val = m, args[1]
+		default:
+			return nil, fmt.Errorf("required: 需要 1 或 2 个参数")
+		}
 		if val == nil || val == "" {
-			return nil, fmt.Errorf("缺少必填变量")
+			if msg == "" {
+				msg = "缺少必填变量"
+			}
+			return nil, fmt.Errorf("%s", msg)
 		}
 		return val, nil
 	}
@@ -138,10 +139,9 @@ func (e *Engine) initFuncMap() {
 			return "", fmt.Errorf("加密值必须是字符串")
 		}
 
-		// 检查是否需要加密
 		for _, suffix := range e.cfg.EncryptKeys {
 			if strings.HasSuffix(key, suffix) {
-				return Encrypt(s), nil // 调用加密逻辑
+				return Encrypt(s)
 			}
 		}
 		return s, nil
@@ -162,4 +162,20 @@ func (e *Engine) initFuncMap() {
 
 	e.funcMap["split"] = strings.Split
 	e.funcMap["join"] = strings.Join
+
+	e.funcMap["generatePassword"] = func(length int) (string, error) {
+		if length <= 0 {
+			length = 16
+		}
+		const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+		result := make([]byte, length)
+		_, err := crypto_rand.Read(result)
+		if err != nil {
+			return "", err
+		}
+		for i := range result {
+			result[i] = chars[int(result[i])%len(chars)]
+		}
+		return string(result), nil
+	}
 }

@@ -1,0 +1,17 @@
+[Unit]
+Description=Fit2Cloud 2.0 Platform
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+ExecStart=/opt/fit2cloud/bin/fit2cloud/standalone/fit2cloud.service start
+ExecStop=/opt/fit2cloud/bin/fit2cloud/standalone/fit2cloud.service stop -t 120
+ExecReload=/opt/fit2cloud/bin/fit2cloud/standalone/fit2cloud.service restart
+TimeoutStartSec=600
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

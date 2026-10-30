@@ -64,40 +64,14 @@ services:
 
   keycloak:
     extends:
-      file: ./base-docker-compose.yml
+      file: ./middleware/keycloak-docker-compose.yml
       service: keycloak
 
-volumes:
-  host-opt-fit2cloud-conf:
-    driver_opts:
-      type: none
-      device: ${CE_INSTALL_PATH}/fit2cloud/conf
-      o: bind
-  host-opt-fit2cloud-logs:
-    driver_opts:
-      type: none
-      device: ${CE_INSTALL_PATH}/fit2cloud/logs
-      o: bind
-  host-opt-fit2cloud-git:
-    driver_opts:
-      type: none
-      device: ${CE_INSTALL_PATH}/fit2cloud/git
-      o: bind
-  host-opt-fit2cloud-sftp-upload:
-    driver_opts:
-      type: none
-      device: ${CE_INSTALL_PATH}/fit2cloud/sftp/sftpuser/upload
-      o: bind
-  host-opt-fit2cloud-upload:
-    driver_opts:
-      type: none
-      device: ${CE_INSTALL_PATH}/fit2cloud/data/upload
-      o: bind
-  share-volume:
-    driver_opts:
-      type: none
-      device: ${CE_INSTALL_PATH}/fit2cloud/data/plugins
-      o: bind
+  ansible:
+    extends:
+      file: ./middleware/ansible-docker-compose.yml
+      service: ansible
 
 networks:
   cmp-network:
+    external: true

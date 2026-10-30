@@ -3,17 +3,18 @@ rdb.driver={{ .CE_MYSQL_DRIVER | default "com.mysql.cj.jdbc.Driver" }}
 rdb.url=jdbc:mysql://{{ .CE_MYSQL_HOST | default "mysql" }}:{{ .CE_MYSQL_PORT | default 3306 }}/{{ .CE_MYSQL_DB | default "fit2cloud" }}?{{ .CE_MYSQL_PARAMS | default "autoReconnect=false&useUnicode=true&characterEncoding=UTF-8&characterSetResults=UTF-8&zeroDateTimeBehavior=CONVERT_TO_NULL&useSSL=false&nullCatalogMeansCurrent=true" }}
 rdb.user={{ .CE_MYSQL_USER | default "root"}}
 rdb.password={{ .CE_MYSQL_PASSWORD | default "U2FsdGVkX18JHB5ZNHZLFcHJT0XU7AxiNxC1FcV4tu+D8Bp2EswsCAqEMV4p58Lc" }}
+rdb.pool.size={{ .CE_MYSQL_POOL_SIZE | default 20 }}
 
 #KeyCloak Optional DB configs
 optional.rdb.driver={{ .CE_MYSQL_DRIVER | default "com.mysql.cj.jdbc.Driver" }}
 optional.rdb.url=jdbc:mysql://{{ .CE_MYSQL_HOST | default "mysql" }}:{{ .CE_MYSQL_PORT | default 3306 }}/{{ .CE_KEYCLOAK_DB | default "keycloak" }}?{{ .CE_KEYCLOAK_PARAMS | default "autoReconnect=false&useUnicode=true&characterEncoding=UTF-8&characterSetResults=UTF-8&zeroDateTimeBehavior=CONVERT_TO_NULL&useSSL=false" }}
 optional.rdb.user={{ .CE_MYSQL_USER | default "root"}}
-optional.rdb.password={{ .CE_MYSQL_PASSWORD | default "U2FsdGVkX1+sRw3sIGDDMZdi+ZGbbEwipLiqmPhJOMAXD1oWLYwB2J+bZJTUBWVZ" }}
+optional.rdb.password={{ .CE_MYSQL_PASSWORD | default "U2FsdGVkX18JHB5ZNHZLFcHJT0XU7AxiNxC1FcV4tu+D8Bp2EswsCAqEMV4p58Lc" }}
 
 #Activiti
 spring.datasource.url=jdbc:mysql://{{ .CE_MYSQL_HOST | default "mysql" }}:{{ .CE_MYSQL_PORT | default 3306 }}/{{ .CE_ACTIVITI_DB | default "activiti" }}?{{ .CE_ACTIVITI_PARAMS | default "autoReconnect=false&useUnicode=true&characterEncoding=UTF-8&characterSetResults=UTF-8&zeroDateTimeBehavior=CONVERT_TO_NULL&useSSL=false" }}
 spring.datasource.username={{ .CE_MYSQL_USER | default "root"}}
-spring.datasource.password={{ .CE_MYSQL_PASSWORD | default "U2FsdGVkX190n01l5Ko1gDFvGSglhNu0k8bwDRlyWVT/fLJ7xN9Jqo8TZkFOPPc0" }}
+spring.datasource.password={{ .CE_MYSQL_PASSWORD | default "U2FsdGVkX18JHB5ZNHZLFcHJT0XU7AxiNxC1FcV4tu+D8Bp2EswsCAqEMV4p58Lc" }}
 spring.datasource.driver-class-name={{ .CE_MYSQL_DRIVER | default "com.mysql.cj.jdbc.Driver" }}
 spring.activiti.check-process-definitions=false
 spring.activiti.history-level=full
@@ -25,17 +26,20 @@ redis.hostname={{ .CE_REDIS_HOST | default "redis" }}
 redis.password={{ .CE_REDIS_PASSWORD | default "U2FsdGVkX18FExvjGK16G7Bu9tnwwjtgsx/BlVMPww/YjouBKeBkhSFzuADH3Vyd" }}
 redis.port={{ .CE_REDIS_PORT | default 6379 }}
 redis.database={{ .CE_REDIS_DATABASE | default 0 }}
+redis.pool.size={{ .CE_REDIS_POOL_SIZE | default 10 }}
 {{- end }}
 {{- if eq $redis_mode "cluster" }}
 redis.cluster.enabled=true
-redis.cluster.nodes={{ .CE_REDIS_HOST | required }}
-redis.password={{ .CE_REDIS_PASSWORD | required }}
+redis.cluster.nodes={{ required "CE_REDIS_HOST is required for cluster mode" .CE_REDIS_HOST }}
+redis.password={{ required "CE_REDIS_PASSWORD is required for cluster mode" .CE_REDIS_PASSWORD }}
+redis.pool.size={{ .CE_REDIS_POOL_SIZE | default 10 }}
 {{- end }}
 {{- if eq $redis_mode "sentinel" }}
-redis.sentinel.nodes={{ .CE_REDIS_HOST | required }}
-redis.password={{ .CE_REDIS_PASSWORD | required }}
-redis.database={{ .CE_REDIS_DATABASE | required }}
-redis.sentinel.master={{ .CE_REDIS_MASTER | required }}
+redis.sentinel.nodes={{ required "CE_REDIS_HOST is required for sentinel mode" .CE_REDIS_HOST }}
+redis.password={{ required "CE_REDIS_PASSWORD is required for sentinel mode" .CE_REDIS_PASSWORD }}
+redis.database={{ required "CE_REDIS_DATABASE is required for sentinel mode" .CE_REDIS_DATABASE }}
+redis.sentinel.master={{ required "CE_REDIS_MASTER is required for sentinel mode" .CE_REDIS_MASTER }}
+redis.pool.size={{ .CE_REDIS_POOL_SIZE | default 10 }}
 {{- end }}
 
 #InfluxDB
@@ -59,7 +63,7 @@ spring.rabbitmq.host={{ .CE_RABBITMQ_HOST | default "rabbitmq" }}
 spring.rabbitmq.port={{ .CE_RABBITMQ_PORT | default 5672 }}
 {{- end }}
 {{- if eq $mq_mode "cluster" }}
-spring.rabbitmq.addresses={{ .CE_RABBITMQ_HOST | required }}
+spring.rabbitmq.addresses={{ required "CE_RABBITMQ_HOST is required for cluster mode" .CE_RABBITMQ_HOST }}
 {{- end }}
 spring.rabbitmq.username={{ .CE_RABBITMQ_USER | default "fit2cloud" }}
 spring.rabbitmq.password={{ .CE_RABBITMQ_PASSWORD | default "U2FsdGVkX19BmEFPkpUJa4knZvJtTdIbcw/JbPnhOts41JQBYxeP7JghLL9CI2nu" }}
@@ -101,16 +105,19 @@ fit2cloud.log.total.size.cap={{ .CE_LOGGER_MAX_CAPACITY_LIMIT | default 2 }}
 fit2cloud.log.max.file.size={{ .CE_LOGGER_LOG_LIMIT | default 50 }}
 
 #eureka
-{{- if eq .CE_MODE "standalone" }}
-eureka.client.service-url.defaultZone=http://management-center:{{ .MANAGEMENT_PORT | default 6602 }}/eureka/
-{{- end }}
-{{- if eq .CE_MODE "ha" }}
-{{- $servers := required .EUREKA_SERVERS }}
-eureka.client.service-url.defaultZone={{ range $i, $ip := split $servers "," }}{{ if $i }},{{ end }}http://{{ $ip }}:{{ $.MANAGEMENT_PORT | default 6602 }}/eureka/{{ end }}
+{{- if eq .CE_MODE "cluster" }}
+{{- $servers := required "CE_EUREKA_SERVERS is required for cluster mode" .CE_EUREKA_SERVERS }}
+eureka.client.service-url.defaultZone={{ range $i, $ip := split $servers "," }}{{ if $i }},{{ end }}http://{{ $ip }}:{{ $.CE_MANAGEMENT_PORT | default 6602 }}/eureka/{{ end }}
+{{- else }}
+eureka.client.service-url.defaultZone=http://management-center:{{ .CE_MANAGEMENT_PORT | default 6602 }}/eureka/
 {{- end }}
 
 #Encryption
-security.password={{ .CE_SECURITY_PASSWORD | default true }}
+security.password={{ .CE_SECURITY_PASSWORD | default "Password123@cmp" }}
+
+#Security
+security.jwt.secret={{ .CE_SECURITY_JWT_SECRET | default "change-me-in-production" }}
+security.session.timeout={{ .CE_SECURITY_SESSION_TIMEOUT | default 3600 }}
 
 #DevOps
 devops.worker.address={{ .CE_DEVOPS_WORKER_ADDRESS | default "http://devops-worker:5919/" }}
@@ -135,4 +142,10 @@ management.endpoint.info.enabled=true
 # Synchronize cloud accounts every two hours
 sync.cloud.account=0 0 0/2 * * ?
 
-fit2cloud.cmp.address={{ .CE_ACCESS_PROTOCOL | default "http" }}://{{ .CE_ACCESS_IP | required }}
+fit2cloud.cmp.address={{ .CE_ACCESS_PROTOCOL | default "http" }}://{{ required "CE_ACCESS_IP is required" .CE_ACCESS_IP }}
+
+#MinIO
+minio.endpoint={{ .CE_MINIO_ENDPOINT | default "http://minio:9000" }}
+minio.access-key={{ .CE_MINIO_ACCESS_KEY | default "fit2cloud" }}
+minio.secret-key={{ .CE_MINIO_SECRET_KEY | default "fit2cloud123" }}
+minio.default-bucket={{ .CE_MINIO_DEFAULT_BUCKET | default "cmp" }}

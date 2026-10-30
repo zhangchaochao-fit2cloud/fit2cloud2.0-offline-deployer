@@ -25,4 +25,5 @@ volumes:
       device: ${CE_INSTALL_PATH}/fit2cloud/data/mysql
       o: bind
 networks:
-  cmp-network: 
+  cmp-network:
+    external: true

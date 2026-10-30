@@ -1,0 +1,29 @@
+services:
+  ansible:
+    image: ${IMAGE_ADDRESS}/ansible-api:${VERSION}
+    container_name: ansible
+    restart: always
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 360s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "25M"
+        max-file: "4"
+    env_file:
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/redis/redis.env
+    mem_limit: 2048m
+    volumes:
+      - host-opt-fit2cloud-logs:/opt/fit2cloud/logs
+      - host-opt-fit2cloud-git:/opt/fit2cloud/git
+      - host-opt-fit2cloud-conf:/opt/fit2cloud/conf
+    networks:
+      - cmp-network
+
+networks:
+  cmp-network:
+    external: true

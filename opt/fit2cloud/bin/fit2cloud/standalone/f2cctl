@@ -1,436 +1,485 @@
 #!/bin/bash
-action=$1
-target=$2
-args=$@
 
+set -euo pipefail
 
-work_dir="/opt/fit2cloud"
-extension_dir="$work_dir/extensions"
-backup_time=`date "+%Y-%m-%d-%H-%M-%S"`
-backup_dir_name=backup_$backup_time
-backup_dir=$work_dir/$backup_dir_name
-docker_images_dir=$backup_dir/docker_images
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FIT2CLOUD_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-function params_check() {
-  if [ "x$target" == "x" ]; then
-    echo "$1"
+LIB_DIR="$FIT2CLOUD_DIR/scripts"
+source "$LIB_DIR/common.sh"
+source "$LIB_DIR/docker.sh"
+source "$LIB_DIR/service.sh"
+
+ENV_FILE="$FIT2CLOUD_DIR/.env"
+WORK_DIR=$(get_env_value CE_INSTALL_PATH "/opt" "$ENV_FILE")
+WORK_DIR="$WORK_DIR/fit2cloud"
+EXTENSION_DIR="$WORK_DIR/extensions"
+LOG_DIR="$WORK_DIR/logs"
+
+action="${1:-}"
+target="${2:-}"
+
+show_usage() {
+    cat << EOF
+Fit2Cloud 控制工具
+
+用法: f2cctl <命令> [参数]
+
+服务管理:
+  start [SERVICE]           启动服务
+  stop [SERVICE]            停止服务
+  restart [SERVICE]         重启服务
+  status                    查看服务状态
+  logs [SERVICE] [LINES]    查看服务日志 (默认最近100行)
+
+备份与还原:
+  backup                    备份 Fit2Cloud
+  restore <FILE>            从备份还原 Fit2Cloud
+  backup-image              仅备份 Docker 镜像
+
+升级与模块:
+  upgrade <FILE>            升级 Fit2Cloud
+  install-module <FILE>     安装/升级扩展模块
+  import <FILE>             导入产品包
+
+系统:
+  repo <ADDRESS>            配置 Docker 不安全仓库
+  clean [image|log]         清理镜像/日志 (默认: 全部)
+
+EOF
+}
+
+do_start() {
+    local service_name="${1:-}"
+    if [[ -n "$service_name" ]]; then
+        local compose_cmd
+        compose_cmd=$(_get_compose_cmd "$WORK_DIR" "$ENV_FILE")
+        $compose_cmd up -d "$service_name"
+    else
+        service_up "$WORK_DIR" "$ENV_FILE"
+    fi
+}
+
+do_stop() {
+    local service_name="${1:-}"
+    if [[ -n "$service_name" ]]; then
+        local compose_cmd
+        compose_cmd=$(_get_compose_cmd "$WORK_DIR" "$ENV_FILE")
+        $compose_cmd stop "$service_name"
+    else
+        service_down "$WORK_DIR" "$ENV_FILE"
+    fi
+}
+
+do_restart() {
+    local service_name="${1:-}"
+    service_restart "$WORK_DIR" "$ENV_FILE" "$service_name"
+}
+
+do_status() {
+    service_status "$WORK_DIR" "$ENV_FILE"
+}
+
+do_logs() {
+    local service_name="${1:-}"
+    local tail_lines="${2:-100}"
+    service_logs "$WORK_DIR" "$ENV_FILE" "$service_name" "$tail_lines"
+}
+
+do_backup() {
+    local backup_time=$(date "+%Y-%m-%d-%H-%M-%S")
+    local backup_dir="$WORK_DIR/backup_$backup_time"
+    local docker_images_dir="$backup_dir/docker_images"
+
+    ensure_dir "$backup_dir"
+    ensure_dir "$docker_images_dir"
+
+    log_info "停止服务以确保数据一致性..."
+    local compose_cmd
+    compose_cmd=$(_get_compose_cmd "$WORK_DIR" "$ENV_FILE")
+    $compose_cmd stop 2>/dev/null || true
+
+    log_info "备份配置..."
+    cp -rp "$WORK_DIR/conf" "$backup_dir/"
+
+    log_info "备份数据..."
+    cp -rp "$WORK_DIR/data" "$backup_dir/"
+
+    if [[ -d "$EXTENSION_DIR" ]]; then
+        log_info "备份扩展..."
+        cp -rp "$EXTENSION_DIR" "$backup_dir/"
+    fi
+
+    if [[ -d "$LOG_DIR" ]]; then
+        log_info "备份日志..."
+        cp -rp "$LOG_DIR" "$backup_dir/"
+    fi
+
+    log_info "重新启动服务..."
+    $compose_cmd start 2>/dev/null || true
+
+    log_info "导出 Docker 镜像..."
+    for image in $($compose_cmd config 2>/dev/null | grep "image:" | awk '{print $2}'); do
+        local image_name=$(echo "$image" | awk -F'/' '{print $NF}' | tr ':' '_')
+        log_info_inline "$image_name"
+        docker save -o "$docker_images_dir/$image_name.tar" "$image"
+        log_ok
+    done
+
+    log_info "备份 docker-compose..."
+    local compose_dir="$WORK_DIR/external-compose"
+    if [[ -d "$compose_dir" ]]; then
+        cp -rp "$compose_dir" "$backup_dir/"
+    fi
+
+    log_info "打包备份..."
+    tar zcf "$WORK_DIR/backup_$backup_time.tar" -C "$WORK_DIR" "backup_$backup_time"
+
+    rm -rf "$backup_dir"
+    log_success "备份完成: $WORK_DIR/backup_$backup_time.tar"
+}
+
+do_restore() {
+    if [[ -z "$target" ]]; then
+        log_error "用法: f2cctl restore <FILE>"
+        exit 1
+    fi
+
+    if [[ ! -f "$target" ]]; then
+        log_error "文件不存在: $target"
+        exit 1
+    fi
+
+    local tmp_dir="/tmp/fit2cloud-restore/$(date +%s)"
+    ensure_dir "$tmp_dir"
+
+    log_info "停止服务..."
+    do_stop
+
+    log_info "解压备份..."
+    tar zxf "$target" -C "$tmp_dir"
+
+    local backup_content=$(ls -d "$tmp_dir"/backup_* 2>/dev/null | head -1)
+    if [[ -z "$backup_content" ]]; then
+        log_error "备份文件格式不正确"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    log_info "还原配置..."
+    cp -rp "$backup_content/conf" "$WORK_DIR/"
+
+    log_info "还原数据..."
+    cp -rp "$backup_content/data" "$WORK_DIR/"
+
+    if [[ -d "$backup_content/extensions" ]]; then
+        log_info "还原扩展..."
+        cp -rp "$backup_content/extensions" "$WORK_DIR/"
+    fi
+
+    if [[ -d "$backup_content/logs" ]]; then
+        log_info "还原日志..."
+        cp -rp "$backup_content/logs" "$WORK_DIR/"
+    fi
+
+    if [[ -d "$backup_content/docker_images" ]]; then
+        log_info "还原 Docker 镜像..."
+        for image_file in "$backup_content/docker_images"/*.tar; do
+            [[ ! -f "$image_file" ]] && continue
+            log_info_inline "$(basename "$image_file")"
+            docker load -qi "$image_file"
+            log_ok
+        done
+    fi
+
+    rm -rf "$tmp_dir"
+    docker image prune -f &>/dev/null || true
+
+    log_info "启动服务..."
+    do_start
+    log_success "还原完成"
+}
+
+do_install_module() {
+    if [[ -z "$target" ]]; then
+        log_error "用法: f2cctl install-module <FILE>"
+        exit 1
+    fi
+
+    if [[ ! -f "$target" ]]; then
+        log_error "文件不存在: $target"
+        exit 1
+    fi
+
+    local tmp_dir="/tmp/f2c-extensions/$(date +%s)"
+    local extension_tmp_dir="$tmp_dir/extension"
+    ensure_dir "$tmp_dir"
+
+    log_info "解压模块..."
+    tar zxf "$target" -C "$tmp_dir"
+
+    local compose_file="$extension_tmp_dir/docker-compose.yml"
+    if [[ ! -f "$compose_file" ]]; then
+        log_error "模块缺少 docker-compose.yml"
+        rm -rf "$tmp_dir"
+        exit 1
+    fi
+
+    local image_address=$(get_env_value IMAGE_ADDRESS "registry.fit2cloud.com/north" "$ENV_FILE")
+    sed -i "s#registry.fit2cloud.com/north#${image_address}#g" "$compose_file"
+
+    local service_name=""
+    local module_names=""
+    for module_name in $(grep "container_name" "$compose_file" | awk -F "container_name: " '{print $NF}'); do
+        module_names="$module_names $module_name"
+        if [[ -z "$service_name" ]]; then
+            service_name="$module_name"
+        fi
+    done
+
+    local is_upgrade=false
+    for name in $module_names; do
+        if docker ps -a --format '{{.Names}}' | grep -q "^${name}$"; then
+            is_upgrade=true
+            break
+        fi
+    done
+
+    local act="安装"
+    if [[ "$is_upgrade" == "true" ]]; then
+        act="升级"
+    fi
+
+    log_info "开始${act}模块: $service_name"
+
+    for image_file in "$extension_tmp_dir"/*.tar; do
+        [[ ! -f "$image_file" ]] && continue
+        log_info_inline "加载镜像 $(basename "$image_file")"
+        docker load -qi "$image_file"
+        log_ok
+    done
+
+    local module_dir="$EXTENSION_DIR/$service_name"
+    ensure_dir "$module_dir"
+
+    if [[ -f "$module_dir/docker-compose.yml" ]]; then
+        cp -f "$module_dir/docker-compose.yml" "$module_dir/docker-compose.yml.bak"
+
+        if [[ "$is_upgrade" == "true" ]]; then
+            log_info "停止原有服务..."
+            local compose_exe
+            compose_exe=$(get_docker_compose_exe "$ENV_FILE")
+            $compose_exe -f "$WORK_DIR/external-compose/base-docker-compose.yml" \
+                -f "$module_dir/docker-compose.yml" rm -sf $module_names 2>/dev/null || true
+        fi
+    fi
+
+    cp -f "$compose_file" "$module_dir/"
+
+    local ext_conf="$extension_tmp_dir/conf"
+    local module_conf="$WORK_DIR/conf/$service_name"
+    if [[ -d "$ext_conf" ]]; then
+        ensure_dir "$module_conf"
+        cp -rf "$ext_conf/"* "$module_conf/"
+    fi
+
+    local ext_script
+    if [[ "$is_upgrade" == "true" ]]; then
+        ext_script="$extension_tmp_dir/scripts/upgrade.sh"
+    else
+        ext_script="$extension_tmp_dir/scripts/install.sh"
+    fi
+    if [[ -f "$ext_script" ]]; then
+        bash "$ext_script" --install_dir "$module_conf" --work_dir "$WORK_DIR"
+    fi
+
+    log_info "启动模块: $service_name..."
+    local compose_args
+    compose_args=$(get_compose_files "$WORK_DIR" "$ENV_FILE")
+    if [[ -f "$module_dir/docker-compose.yml" ]]; then
+        compose_args="$compose_args -f $module_dir/docker-compose.yml"
+    fi
+    local compose_exe
+    compose_exe=$(get_docker_compose_exe "$ENV_FILE")
+    $compose_exe $compose_args up --no-recreate -d $module_names
+
+    rm -rf "$tmp_dir"
+    log_success "模块${act}完成: $service_name"
+}
+
+do_upgrade() {
+    if [[ -z "$target" ]]; then
+        log_error "用法: f2cctl upgrade <FILE>"
+        exit 1
+    fi
+
+    if [[ ! -f "$target" ]]; then
+        log_error "文件不存在: $target"
+        exit 1
+    fi
+
+    local tmp_dir="/tmp/fit2cloud-upgrade/$(date +%s)"
+    ensure_dir "$tmp_dir"
+
+    log_info "解压升级包..."
+    tar zxf "$target" -C "$tmp_dir"
+
+    local upgrade_script=$(find "$tmp_dir" -name "upgrade.sh" -type f | head -1)
+    if [[ -n "$upgrade_script" ]]; then
+        bash "$upgrade_script"
+    else
+        log_error "升级包中未找到 upgrade.sh"
+    fi
+
+    rm -rf "$tmp_dir"
+    log_success "升级完成"
+}
+
+do_import() {
+    if [[ -z "$target" ]]; then
+        log_error "用法: f2cctl import <FILE>"
+        exit 1
+    fi
+
+    if [[ ! -f "$target" ]]; then
+        log_error "文件不存在: $target"
+        exit 1
+    fi
+
+    log_info "导入产品包: $target"
+    curl -X POST "http://localhost/vm-service/f2cctl/import" \
+        -H "accept: */*" \
+        -H "Content-Type: multipart/form-data" \
+        -F "file=@$target;type=application/zip"
     echo
-    exit 1;
-  fi
 }
 
-function save_docker_images() {
-  for image in $(grep "\simage: " $1  | awk -F' ' '{print $2}'); do
-    echo -ne "export image $image ..."
-    image_tar_file=`echo $image | awk -F'/' '{print $NF}'`
-    docker save -o $docker_images_dir/$image_tar_file $image
-    echo "[OK]"
-  done
-}
-
-function zip_backup_cmp_folder() {
-  echo -ne "start to zip backup file ..."
-  tar zcf $work_dir/$backup_dir_name.tar -C $work_dir $backup_dir_name
-  echo "[OK]"
-
-  echo "backup file :: $work_dir/$backup_dir_name.tar"
-}
-
-function backup_cmp() {
-  mkdir -p $backup_dir
-  cmd="cp -rp"
-  if [ "$1" == "remove" ]; then
-    cmd="mv"
-  fi
-
-  echo -ne "start to backup conf ..."
-  $cmd $work_dir/conf $backup_dir
-  echo "[OK]"
-
-  echo -ne "start to backup data ..."
-  $cmd $work_dir/data $backup_dir
-  echo "[OK]"
-
-  if [ -d $extension_dir ]; then
-    echo -ne "start to backup extensions ..."
-    $cmd $extension_dir $backup_dir
-    echo "[OK]"
-  fi
-
-  if [ -d $work_dir/logs ]; then
-    echo -ne "start to backup logs ..."
-    $cmd $work_dir/logs $backup_dir
-    echo "[OK]"
-  fi
-
-  echo "start to export docker images ..."
-  mkdir -p $docker_images_dir
-
-  save_docker_images $work_dir/docker-compose.yml
-
-
-  if [ -d $extension_dir ]; then
-    for extension in $(ls $extension_dir); do
-      current_extension_dir="$extension_dir/$extension"
-      if [ ! -d $current_extension_dir ]; then
-        continue
-      fi
-
-      extension_docker_compose_file="$current_extension_dir/docker-compose.yml"
-      if [ ! -f $extension_docker_compose_file ]; then
-        continue
-      fi
-
-      save_docker_images $extension_docker_compose_file
-    done
-  fi
-
-  echo -ne "start to backup docker-compose ..."
-  $cmd $work_dir/docker-compose.yml $backup_dir
-  echo "[OK]"
-
-  zip_backup_cmp_folder
-}
-
-function restore_cmp() {
-  params_check "还原 CMP : ./f2cctl.sh restore-cmp [FILE]"
-
-  random_dir_name=`cat /dev/urandom | head -n 10 | md5sum | head -c 10`
-  tmp_extract_dir="/tmp/fit2cloud-restore/$random_dir_name"
-
-  service fit2cloud stop
-
-  backup_cmp remove
-
-  echo -ne "start to extract backup file ..."
-  mkdir -p $tmp_extract_dir
-  tar zxf $target -C $tmp_extract_dir
-  echo "[OK]"
-
-  cd $tmp_extract_dir/backup*
-
-  echo -ne "start to restore conf ..."
-  mv conf $work_dir
-  echo "[OK]"
-
-  echo -ne "start to restore data ..."
-  mv data $work_dir
-  echo "[OK]"
-
-  echo -ne "start to restore docker-compose ..."
-  mv docker-compose.yml $work_dir
-  echo "[OK]"
-
-  if [ -d "extensions" ]; then
-    echo -ne "start to restore extensions ..."
-    mv extensions $work_dir
-    echo "[OK]"
-  fi
-
-  if [ -d "logs" ]; then
-    echo -ne "start to restore logs ..."
-    mv logs $work_dir
-    echo "[OK]"
-  fi
-
-  for image in $(ls docker_images); do
-    echo -ne "start to restore image $image ..."
-    docker load -q -i docker_images/$image
-    echo "[OK]"
-  done
-
-  echo -ne "start to clean image ..."
-  docker rmi -f `docker images -f "dangling=true" -q` > /dev/null 2>&1
-  echo "[OK]"
-
-  echo -ne "start to clean extract folder ..."
-  cd && rm -rf $tmp_extract_dir
-  echo "[OK]"
-
-  service fit2cloud start
-}
-
-function import() {
-  params_check "导入产品 : ./f2cctl.sh import [FILE]"
-
-  echo "start to import products,please wait ..."
-  curl -X POST "http://localhost/vm-service/f2cctl/import" -H "accept: */*" -H "Content-Type: multipart/form-data" -F "file=@$target;type=application/zip"
-}
-
-function upgrade() {
-  params_check "升级 CMP : ./f2cctl.sh upgrade [FILE]"
-
-  echo "prepare to extract cmp package ..."
-  random_dir_name=`cat /dev/urandom | head -n 10 | md5sum | head -c 10`
-  tmp_extract_dir="/tmp/fit2cloud-restore/$random_dir_name"
-  tar zxf $target -C $tmp_extract_dir
-  cd $tmp_extract_dir/installer/standalone
-  bash upgrade.sh
-
-  echo -ne "start to clean extract folder ..."
-  cd && rm -rf $tmp_extract_dir
-  echo "[OK]"
-}
-
-function repo() {
-  params_check "配置Docker仓库 : ./f2cctl.sh repo [ADDRESS]"
-
-  # 修改daemon.json
-  daemon_file="/etc/docker/daemon.json"
-
-  # 如果文件不存在则创建
-  if [ ! -f "$daemon_file" ]; then
-    echo -ne "创建daemon.json文件..."
-    sudo mkdir -p $(dirname $daemon_file)
-    echo '{"insecure-registries":[]}' | sudo tee $daemon_file > /dev/null
-    echo "[OK]"
-  fi
-
-  # 添加仓库地址
-  echo -ne "添加不安全仓库地址 $target ..."
-  tmp_file=$(mktemp)
-
-  # 检查jq命令是否存在
-  if command -v jq &> /dev/null; then
-    # 使用jq检查是否已存在该地址
-    if ! sudo jq -e --arg repo "$target" '."insecure-registries" | index($repo)' $daemon_file > /dev/null 2>&1; then
-      sudo jq --arg repo "$target" '."insecure-registries" += [$repo]' $daemon_file > $tmp_file && sudo mv $tmp_file $daemon_file
+do_repo() {
+    if [[ -z "$target" ]]; then
+        log_error "用法: f2cctl repo <ADDRESS>"
+        exit 1
     fi
-  else
-    # 如果没有jq，使用grep检查是否已存在该地址
-    if ! grep -q "\"$target\"" $daemon_file; then
-      content=$(cat $daemon_file)
-      if echo "$content" | grep -q "\"insecure-registries\":\[.*\]"; then
-        # 在数组末尾添加新地址
-        if [ "$(uname)" = "Darwin" ]; then
-          # 处理空数组的情况
-          if echo "$content" | grep -q "\"insecure-registries\":\[\]"; then
-            sudo sed -i '' "s/\[\]/[\"$target\"]/" $daemon_file
-          else
-            sudo sed -i '' "s/\]$/,\"$target\"]/" $daemon_file
-          fi
-        else
-          # 处理空数组的情况
-          if echo "$content" | grep -q "\"insecure-registries\":\[\]"; then
-            sudo sed -i "s/\[\]/[\"$target\"]/" $daemon_file
-          else
-            sudo sed -i "s/\]$/,\"$target\"]/" $daemon_file
-          fi
+
+    local daemon_file="/etc/docker/daemon.json"
+
+    if [[ ! -f "$daemon_file" ]]; then
+        ensure_dir "$(dirname "$daemon_file")"
+        echo '{"insecure-registries":[]}' | sudo tee "$daemon_file" >/dev/null
+    fi
+
+    log_info "添加不安全仓库: $target"
+    if cmd_exists jq; then
+        if ! sudo jq -e --arg repo "$target" '."insecure-registries" | index($repo)' "$daemon_file" >/dev/null 2>&1; then
+            local tmp_file=$(mktemp)
+            sudo jq --arg repo "$target" '."insecure-registries" += [$repo]' "$daemon_file" > "$tmp_file" && sudo mv "$tmp_file" "$daemon_file"
         fi
-      else
-        # 创建新的insecure-registries数组
-        if [ "$(uname)" = "Darwin" ]; then
-          sudo sed -i '' "1s/{/{\"insecure-registries\":[\"$target\"],/" $daemon_file
-        else
-          sudo sed -i "1s/{/{\"insecure-registries\":[\"$target\"],/" $daemon_file
+    else
+        if ! grep -q "\"$target\"" "$daemon_file"; then
+            if grep -q '"insecure-registries":\[\]' "$daemon_file"; then
+                sudo sed -i "s/\[\]/[\"$target\"]/" "$daemon_file"
+            elif grep -q '"insecure-registries":\[.*\]' "$daemon_file"; then
+                sudo sed -i "s/\]$/,\"$target\"]/" "$daemon_file"
+            else
+                sudo sed -i "1s/{/{\"insecure-registries\":[\"$target\"],/" "$daemon_file"
+            fi
         fi
-      fi
     fi
-  fi
-  echo "[OK]"
 
-  # 重新加载配置
-  echo -ne "重新加载Docker配置..."
-  sudo kill -SIGHUP $(pidof dockerd)
-  echo "[OK]"
+    log_info "重载 Docker 配置..."
+    sudo kill -SIGHUP "$(pidof dockerd)" 2>/dev/null || true
 
-  # 提示用户登录
-  echo "请输入Docker仓库凭据:"
-  read -p "用户名: " username
-  read -s -p "密码: " password
-  echo
+    echo "请输入 Docker 仓库凭据:"
+    local username password
+    read -rp "用户名: " username
+    read -rsp "密码: " password
+    echo
 
-  echo -ne "登录Docker仓库..."
-  docker login -u $username -p $password $target
-  echo "[OK]"
+    docker login -u "$username" -p "$password" "$target"
+    log_success "仓库配置完成"
 }
 
-function install_module() {
-  params_check "安装/升级模块 : ./f2cctl.sh install-module [FILE]"
+do_clean() {
+    local clean_target="${1:-all}"
 
-  extension_file=$target
-  installLog="/tmp/fit2cloud-extension.log"
-  fit2cloud_conf_dir="$work_dir/conf/"
-  extension_dir="$work_dir/extensions"
-
-  random_dir_name=`cat /dev/urandom | head -n 10 | md5sum | head -c 10`
-  tmp_dir="/tmp/f2c-extensions/$random_dir_name"
-  extension_tmp_dir="$tmp_dir/extension"
-
-  if [ ! -d "$tmp_dir" ]; then
-    mkdir -p $tmp_dir
-  fi
-
-  echo -ne "解压模块安装包 ..."
-  tar zxf $extension_file -C $tmp_dir >> $installLog 2>&1
-  echo "[OK]"
-
-  # by jinli [20240703] 替换扩展模块镜像名称
-  compose_file=$extension_tmp_dir/docker-compose.yml
-  original_image="registry.fit2cloud.com/north"
-  escaped_new_image="\${IMAGE_ADDRESS}"
-  sed -i "s#$original_image#$escaped_new_image#g" $compose_file
-
-  if [ $? -eq 0 ]; then
-      echo "镜像地址设置成功。"
-  else
-      echo "设置镜像地址过程中发生错误。"
-  fi
-
-  for module_name in $(cat $extension_tmp_dir/docker-compose.yml | grep "container_name" | awk -F "container_name: " '{print $NF}'); do
-    if [ ! "$service_name" ]; then
-      service_name=$module_name
-    fi
-    module_name_list="$module_name_list $module_name"
-  done
-
-  service_process_num=`docker ps -a | grep $service_name | wc -l`
-  act="升级"
-  if [ "$service_process_num" -eq "0" ]; then
-    act="安装"
-  fi
-
-  for server_image in $(ls $extension_tmp_dir/*.tar); do
-    echo -ne "加载模块镜像 ..."
-    docker load -q -i $server_image >> $installLog 2>&1
-    echo "[OK]"
-  done
-
-  echo "开始$act模块 : $service_name"
-
-  fit2cloud_extention_folder="$extension_dir/$service_name/"
-  if [ ! -d "$fit2cloud_extention_folder" ]; then
-    echo "模块目录不存在，创建模块目录 : $fit2cloud_extention_folder"
-    mkdir -p $fit2cloud_extention_folder
-  else
-    echo -ne "停止原有服务 : $module_name_list ..."
-    docker-compose -f $work_dir/docker-compose.yml -f $fit2cloud_extention_folder/docker-compose.yml rm -sf $module_name_list >> $installLog 2>&1
-    echo "[OK]"
-
-    echo -ne "删除无用镜像 ..."
-    invalid_images=`docker images -f "dangling=true" -q` > /dev/null 2>&1
-    for s in ${invalid_images[@]}; do
-      docker rmi -f ${s} >> $installLog 2>&1
-    done
-    echo "[OK]"
-  fi
-
-  if [ -f $fit2cloud_extention_folder/docker-compose.yml ]; then
-    \cp -f $fit2cloud_extention_folder/docker-compose.yml $fit2cloud_extention_folder/docker-compose.yml.bak
-  fi
-  \cp -f $extension_tmp_dir/docker-compose.yml $fit2cloud_extention_folder
-
-  extention_tmp_conf_folder="$extension_tmp_dir/conf"
-  fit2cloud_extention_conf_folder="$fit2cloud_conf_dir/$service_name/"
-  if [ -d "$extention_tmp_conf_folder" ]; then
-    if [ ! -d "$fit2cloud_extention_conf_folder" ]; then
-      echo -ne "创建模块配置文件目录 ..."
-      mkdir -p "$fit2cloud_extention_conf_folder"
-      echo "[OK]"
-    fi
-
-    echo -ne "复制配置文件 : $conf_file ..."
-    \cp -rf $extention_tmp_conf_folder/* $fit2cloud_extention_conf_folder
-    echo "[OK]"
-  fi
-
-  extention_tmp_script="$extension_tmp_dir/scripts/upgrade.sh"
-  if [ "$act" == "安装" ]; then
-    extention_tmp_script="$extension_tmp_dir/scripts/install.sh"
-  fi
-
-  if [ -f $extention_tmp_script ]; then
-    echo -ne "执行模块$act脚本 : $extention_tmp_script ..."
-    bash $extention_tmp_script --install_dir ${fit2cloud_extention_conf_folder} --work_dir ${work_dir}
-    echo "[OK]"
-  fi
-
-  echo -ne "启动模块 : $service_name ..."
-  docker_compose_file_args="-f $work_dir/docker-compose.yml"
-  for extension in $(ls $extension_dir); do
-    current_extension_dir="$extension_dir/$extension"
-    if [ ! -d $current_extension_dir ]; then
-      continue
-    fi
-
-    for extension_file_name in $(ls $current_extension_dir); do
-      extension_file="$current_extension_dir/$extension_file_name"
-      if [ ! -f $extension_file ]; then
-        continue
-      fi
-
-      if [ "$extension_file_name" == "docker-compose.yml" ]; then
-        docker_compose_file_args="$docker_compose_file_args -f $extension_file"
-      fi
-    done
-  done
-  docker-compose $docker_compose_file_args up --no-recreate -d $module_name_list >> $installLog 2>&1
-  echo "[OK]"
-
-  echo -ne "清理临时文件 : $service_name ..."
-  rm -rf $tmp_dir  >> $installLog 2>&1
-  echo "[OK]"
-}
-
-function usage() {
-   echo "FIT2CLOUD 工具包"
-   echo
-   echo "Usage: "
-   echo "  f2cctl [COMMAND] [ARGS...]"
-   echo "  f2cctl --help"
-   echo
-   echo "Commands: "
-   echo "  upgrade [FILE] 升级 FIT2CLOUD"
-   echo "  backup 备份 FIT2CLOUD"
-   echo "  backup-image 备份 FIT2CLOUD 镜像"
-   echo "  restore [FILE] 还原 FIT2CLOUD"
-   echo "  install-module [FILE]  部署安装 FIT2CLOUD 模块"
-   echo "  start 启动 FIT2CLOUD"
-   echo "  stop 停止 FIT2CLOUD"
-   echo "  restart 重启 FIT2CLOUD"
-   echo "  status 查看 FIT2CLOUD 状态"
-   echo "  import [FILE] 导入 FIT2CLOUD 产品"
-   echo "  repo [ADDRESS] 配置Docker不安全仓库"
-}
-
-function main() {
-    case "${action}" in
-      upgrade)
-         upgrade
-         ;;
-      backup)
-         backup_cmp
-         ;;
-      restore)
-         restore_cmp
-         ;;
-      install-module)
-         install_module
-         ;;
-      start)
-         service fit2cloud start
-         ;;
-      stop)
-         service fit2cloud stop
-         ;;
-      restart)
-         service fit2cloud restart
-         ;;
-      status)
-         service fit2cloud status
-         ;;
-      backup-image)
-         service fit2cloud backup
-         ;;
-      import)
-         import
-         ;;
-      repo)
-         repo
-         ;;
-      *)
-         usage
+    case "$clean_target" in
+        image)
+            read -rp "删除所有未使用的镜像? (yes/no): " choice
+            case "$choice" in
+                yes) docker image prune -f; log_success "镜像已清理" ;;
+                *) log_info "操作已取消" ;;
+            esac
+            ;;
+        log)
+            echo "1) 删除所有日志"
+            echo "2) 保留最近7天的日志"
+            read -rp "请选择 (1/2): " choice
+            case "$choice" in
+                1)
+                    find "$LOG_DIR" -maxdepth 2 -type d -name "history" -exec rm -rf {} + 2>/dev/null || true
+                    log_success "日志已清理"
+                    ;;
+                2)
+                    find "$LOG_DIR" -maxdepth 2 -type d -name "history" 2>/dev/null | while read -r dir; do
+                        find "$dir" -type f -name "*.log" -mtime +7 -delete 2>/dev/null || true
+                    done
+                    log_success "7天前的日志已清理"
+                    ;;
+                *) log_info "操作已取消" ;;
+            esac
+            ;;
+        all)
+            do_clean image
+            do_clean log
+            ;;
+        *)
+            log_error "未知清理目标: $clean_target (可选: image, log, all)"
+            ;;
     esac
 }
 
-main
+do_backup_image() {
+    local backup_dir="$WORK_DIR/backup/$(date "+%Y-%m-%d")"
+    ensure_dir "$backup_dir"
+
+    local compose_cmd
+    compose_cmd=$(_get_compose_cmd "$WORK_DIR" "$ENV_FILE")
+    local image_names
+    if [[ -n "$target" ]]; then
+        image_names=$($compose_cmd config 2>/dev/null | grep "image:" | awk '{print $2}' | grep "$target")
+    else
+        image_names=$($compose_cmd config 2>/dev/null | grep "image:" | awk '{print $2}')
+    fi
+
+    log_info "备份 Docker 镜像..."
+    for image_name in $image_names; do
+        local name=$(echo "$image_name" | awk -F':' '{print $1}' | awk -F'/' '{print $3}')
+        log_info_inline "$name"
+        docker save -o "$backup_dir/${name}.tar" "$image_name"
+        log_ok
+    done
+
+    log_success "镜像备份完成: $backup_dir"
+}
+
+main() {
+    case "$action" in
+        start)          do_start "$target" ;;
+        stop)           do_stop "$target" ;;
+        restart)        do_restart "$target" ;;
+        status)         do_status ;;
+        logs)           do_logs "$target" "${3:-100}" ;;
+        backup)         do_backup ;;
+        backup-image)   do_backup_image ;;
+        restore)        do_restore ;;
+        upgrade)        do_upgrade ;;
+        install-module) do_install_module ;;
+        import)         do_import ;;
+        repo)           do_repo ;;
+        clean)          do_clean "$target" ;;
+        help)           show_usage ;;
+        -h|--help)      show_usage ;;
+        *)              show_usage; exit 1 ;;
+    esac
+}
+
+main "$@"

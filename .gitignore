@@ -1,32 +1,37 @@
-### IntelliJ IDEA ###
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
-dist/
-
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
+### IDE ###
+.idea/
 .vscode/
+*.swp
+*.swo
 
 ### Mac OS ###
 .DS_Store
 
-untitled/.idea/
+### Build output ###
+dist/
+*.tar.gz
+
+### Deveco ###
+.deveco/
+
+### Go compiled binaries ###
+render-cfg/bin/
+
+### 其他 ###
+.mimocode/
+
+### 安装产物 (密码/密钥) ###
+opt/fit2cloud/.env
+opt/fit2cloud/conf/mysql/mysql.env
+opt/fit2cloud/conf/minio/minio.env
+opt/fit2cloud/conf/redis/redis.env
+opt/fit2cloud/conf/redis/redis.conf
+opt/fit2cloud/conf/keycloak/keycloak.properties
+opt/fit2cloud/conf/telegraf/telegraf.conf
+opt/fit2cloud/conf/telegraf/kapacitor.conf
+packaging.env
+
+### 运行时数据 ###
+opt/fit2cloud/data/minio/
+opt/fit2cloud/install.env
+opt/fit2cloud/runtime.env

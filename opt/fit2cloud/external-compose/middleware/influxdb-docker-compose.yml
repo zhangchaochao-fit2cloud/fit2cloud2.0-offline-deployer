@@ -1,6 +1,6 @@
 services:
   influxdb:
-    image: ${IMAGE_ADDRESS}/influxdb:1.8.0-latest
+    image: ${IMAGE_ADDRESS}/influxdb:1.8.0
     container_name: "influxdb"
     environment:
       - INFLUXDB_REPORTING_DISABLED=true
@@ -13,7 +13,7 @@ services:
     volumes:
       - host-opt-fit2cloud-influxdb-data:/var/lib/influxdb
       - ${CE_INSTALL_PATH}/fit2cloud/bin/influxdb/:/docker-entrypoint-initdb.d/
-      - ${CE_INSTALL_PATH}/fit2cloud/conf/influxdb.conf:/etc/influxdb/influxdb.conf
+      - ${CE_INSTALL_PATH}/fit2cloud/conf/influxdb/influxdb.conf:/etc/influxdb/influxdb.conf
     mem_limit: 1024m
     healthcheck:
       test: ["CMD", "curl", "-i", "http://localhost:8086"]
@@ -32,4 +32,5 @@ volumes:
       device: ${CE_INSTALL_PATH}/fit2cloud/data/influxdb
       o: bind
 networks:
-  cmp-network: 
+  cmp-network:
+    external: true
