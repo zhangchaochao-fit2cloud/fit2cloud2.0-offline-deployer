@@ -139,8 +139,10 @@ export_docker_images() {
     fi
 
     # 单文件导出：共享 base 层只存一次，体积更小、安装时一次 docker load 完成
-    if ! docker save -o "$images_dir/fit2cloud-images.tar" "${image_array[@]}"; then
-        log_error "docker save 失败"
+    # docker save 曾出现守护进程挂死（0 CPU、0 字节增长）无限等待的情况，
+    # 用 timeout 兜底：默认 2 小时，可通过 DOCKER_SAVE_TIMEOUT 调整
+    if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save -o "$images_dir/fit2cloud-images.tar" "${image_array[@]}"; then
+        log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）"
         return 1
     fi
     printf '%s\n' "${image_array[@]}" > "$images_dir/images.list"
