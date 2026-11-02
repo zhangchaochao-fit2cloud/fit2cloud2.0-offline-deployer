@@ -128,7 +128,11 @@ copy_middleware() {
             # 统一走 download_file（curl 优先，wget 兜底），避免直接用 wget 的新选项在旧系统上不兼容
             download_file "$package" "$middleware_dir/pkg.zip"
         fi
-        unzip -O utf8 -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null 2>&1
+        # unzip 老版本可能不支持 -O（字符集）参数，失败时降级为普通解压
+        if ! unzip -O utf8 -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null 2>&1; then
+            log_warn "unzip -O utf8 解压失败，降级为普通解压"
+            unzip -o -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null
+        fi
         rm -f "$middleware_dir/pkg.zip"
         rm -rf "$middleware_dir/middleware_init/__MACOSX"
     done
