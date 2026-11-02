@@ -100,8 +100,11 @@ fit2cloud2.0-offline-deployer/
   --platform amd64 \             # 目标平台 (amd64/arm64)
   -o ./dist                      # 输出目录
 
-# 镜像 tag 默认 = <版本号>.<构建号>（勿用 master 等开发标签），可用 -V/--image-version 覆盖
+# 镜像 tag 用分支 tag（如 dev-preview/release），默认 = <版本号>.<构建号>，可用 -V/--image-version 覆盖
+# --compress gzip|none     安装包压缩方式（none 打包更快、体积略增）
+# --package-url-prefix URL 写入 package-source.url，安装侧 md5 校验失败时自动重新下载修复
 # 打包产物含 fit2cloud/manifest.txt（镜像 md5 清单），安装时自动校验完整性
+# 镜像导出缓存：工作区 .image-cache/ 按镜像 ID 缓存，未变化镜像硬链接复用（重试/重打提速明显）
 
 # 试运行（不实际下载/导出）
 ./package.sh --dry-run -v 2.0.1
@@ -117,8 +120,8 @@ fit2cloud2.0-offline-deployer/
 
 1. **准备安装文件** — 复制 opt/ 目录、生成 .env、解压 AWS 询价数据
 2. **编译 ce-render-cfg** — 交叉编译 amd64/arm64 二进制（需 Go，可用 `--skip-render-cfg` 跳过）
-3. **拉取 Docker 镜像** — 根据 compose 文件拉取全部镜像
-4. **导出 Docker 镜像** — 保存为 tar 到 docker-images/
+3. **拉取 Docker 镜像** — 根据 compose 文件按平台拉取全部镜像（arm64 自动映射独立 tag，如 influxdb:1.8.0-arm）
+4. **导出 Docker 镜像** — 逐镜像保存为独立 tar 到 docker-images/（带缓存与并发）
 5. **下载工具包** — Docker 安装包、MinIO 镜像、Telegraf
 6. **创建安装包** — 打包为 `cloudexplorer-<version>-<platform>-<date>.tar.gz`
 
@@ -143,16 +146,13 @@ tar zxf cloudexplorer-2.0.1-amd64-2026.07.22.tar.gz
 # 2. 进入安装目录
 cd installer
 
-# 3. 编辑配置（可选，使用默认值也可）
-cp install.env.example install.env    # 安装期变量：模式/路径/集群/组件开关
-cp runtime.env.example runtime.env    # 运行期变量：中间件/密码/Nginx/性能
-vi install.env runtime.env
+# 3. 执行安装（免配置：install.env/runtime.env 缺失时自动按内置默认值生成）
+bash install.sh          # 交互式：向导确认安装路径/端口/访问 IP/MinIO/Nginx
+bash install.sh -s       # 静默安装（全部取默认值）
 
-# 4. 执行安装
-bash install.sh
-
-# 静默安装（无交互）
-bash install.sh -s
+# 预先编辑配置也可以（生成后可修改重跑）
+cp fit2cloud/install.env.example fit2cloud/install.env
+cp fit2cloud/runtime.env.example fit2cloud/runtime.env
 
 # 跳过特定组件
 bash install.sh --no-minio --no-telegraf --with-nginx

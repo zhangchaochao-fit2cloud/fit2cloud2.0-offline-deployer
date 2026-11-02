@@ -252,30 +252,6 @@ configure_cluster() {
     fi
 }
 
-show_install_info() {
-    print_title "Fit2Cloud 2.0 安装信息"
-
-    log_info "安装目录:   $INSTALL_DIR"
-    log_info "镜像地址:   $IMAGE_ADDRESS"
-    log_info "平台架构:   $PLATFORM"
-    log_info "访问端口:   $CE_ACCESS_PORT"
-    log_info "静默模式:   $SILENT_MODE"
-
-    print_subtitle "中间件配置"
-    for item in "CE_EXTERNAL_MYSQL:MySQL" "CE_EXTERNAL_REDIS:Redis" "CE_EXTERNAL_MINIO:MinIO" "CE_EXTERNAL_INFLUXDB:InfluxDB" "CE_EXTERNAL_RABBITMQ:RabbitMQ"; do
-        local key="${item%%:*}"
-        local name="${item##*:}"
-        local val=$(get_env_value "$key" "false" "$INSTALL_ENV")
-        if [[ "$val" == "true" ]]; then
-            log_info "$name: 外部"
-        else
-            log_info "$name: 内置"
-        fi
-    done
-
-    echo
-}
-
 check_environment() {
     print_title "环境检查"
 
