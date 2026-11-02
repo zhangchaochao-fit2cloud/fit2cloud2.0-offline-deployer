@@ -113,7 +113,8 @@ copy_middleware() {
 
     ensure_dir "$middleware_dir"
 
-    IFS=' ' read -r -a packages <<< "${deployment_packages//,/ }"
+    # shellcheck disable=SC2206  # 列表按空白拆分，同时兼容逗号/换行分隔
+    local packages=(${deployment_packages//,/ })
     for package in "${packages[@]}"; do
         if [[ "${DRY_RUN:-false}" == "true" ]]; then
             local filename=$(basename "$package")
@@ -124,7 +125,8 @@ copy_middleware() {
         if [[ -f "$package" ]]; then
             cp -f "$package" "$middleware_dir/pkg.zip"
         else
-            wget --quiet --show-progress --progress=bar:force -O "$middleware_dir/pkg.zip" "$package"
+            # 统一走 download_file（curl 优先，wget 兜底），避免直接用 wget 的新选项在旧系统上不兼容
+            download_file "$package" "$middleware_dir/pkg.zip"
         fi
         unzip -O utf8 -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null 2>&1
         rm -f "$middleware_dir/pkg.zip"
@@ -144,7 +146,8 @@ copy_extensions() {
 
     ensure_dir "$extensions_dir"
 
-    IFS=' ' read -r -a packages <<< "${extension_packages//,/ }"
+    # shellcheck disable=SC2206  # 列表按空白拆分，同时兼容逗号/换行分隔
+    local packages=(${extension_packages//,/ })
     for package in "${packages[@]}"; do
         local filename=$(basename "$package")
         local decode_filename=$(echo -e "$(printf '%b' "${filename//%/\\x}")")
@@ -153,11 +156,11 @@ copy_extensions() {
             log_step_success "跳过"
             continue
         fi
-        # 本地路径直接复制，远程 URL 走 wget
+        # 本地路径直接复制，远程 URL 统一走 download_file（curl 优先，wget 兜底）
         if [[ -f "$package" ]]; then
             cp -f "$package" "$extensions_dir/$decode_filename"
         else
-            wget --quiet --show-progress --progress=bar:force -O "$extensions_dir/$decode_filename" "$package"
+            download_file "$package" "$extensions_dir/$decode_filename"
         fi
     done
 }
