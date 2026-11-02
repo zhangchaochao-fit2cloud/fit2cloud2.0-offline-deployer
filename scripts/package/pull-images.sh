@@ -24,7 +24,7 @@ pull_one() {
 }
 
 pull_images() {
-    print_title "步骤 2/5: 拉取 Docker 镜像"
+    print_title "2/5 拉取 Docker 镜像"
 
     local env_file="$1"
     local report_file="$2"

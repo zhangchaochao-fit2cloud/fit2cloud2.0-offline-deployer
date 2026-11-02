@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../opt/fit2cloud/scripts/common.sh"
 
 prepare() {
-    print_title "步骤 1/5: 准备安装包文件"
+    print_title "1/5 准备安装包文件"
 
     # shellcheck disable=SC2034  # 预留参数：保持调用签名 (output_dir, installer_dir, base_dir)
     local output_dir="$1"

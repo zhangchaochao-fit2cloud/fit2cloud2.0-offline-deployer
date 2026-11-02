@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/../../opt/fit2cloud/scripts/common.sh"
 source "$SCRIPT_DIR/../../opt/fit2cloud/scripts/docker.sh"
 
 download_tools() {
-    print_title "步骤 4/5: 下载工具包"
+    print_title "4/5 下载工具包"
 
     local tools_dir="$1"
     local platform="${PLATFORM:-amd64}"

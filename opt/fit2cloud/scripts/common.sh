@@ -28,6 +28,11 @@ get_padding() {
     printf -v padding '%*s' $(( total_width - length )) ''
 }
 
+# 秒级时间戳，用于消息型日志行（Jenkins 侧会自带时间戳，本地运行时有用）
+log_timestamp() {
+    date "+%H:%M:%S"
+}
+
 log_info_inline() {
     local msg="$1"
     get_padding "$msg"
@@ -35,7 +40,7 @@ log_info_inline() {
 }
 
 log_info() {
-    echo -e "${GREEN}[INFO] ${NC}$1"
+    echo -e "${GREEN}[INFO]${NC} [$(log_timestamp)] $1"
 }
 
 log_step_warn() {
@@ -43,7 +48,7 @@ log_step_warn() {
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN] ${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} [$(log_timestamp)] $1"
 }
 
 log_step_error() {
@@ -51,7 +56,7 @@ log_step_error() {
 }
 
 log_error() {
-    echo -e "${RED}[ERROR] ${NC} $1" >&2
+    echo -e "${RED}[ERROR]${NC} [$(log_timestamp)] $1" >&2
 }
 
 log_ok() {
@@ -63,15 +68,19 @@ log_step_success() {
 }
 
 log_success() {
-    echo -e "${CYAN}[SUCCESS]${NC} $1"
+    echo -e "${CYAN}[SUCCESS]${NC} [$(log_timestamp)] $1"
 }
 
+# 主标题（紧凑单行）：步骤/段落分隔，行内打印不折行、不占额外空行
+# 例: [1/5] 准备安装包文件
 print_title() {
-    echo -e "\n\n${CYAN}******************************\t $1 \t******************************${NC}\n"
+    echo -e "${CYAN}========== [${1}] ==========${NC}"
 }
 
+# 子标题（紧凑单行）：步骤内子动作
+# 例: ── 导出 Docker 镜像...
 print_subtitle() {
-    echo -e "\n${BLUE}------------------\t $1 \t------------------${NC}\n"
+    echo -e "${BLUE}── ${1} ${NC}"
 }
 
 # =============================================================================

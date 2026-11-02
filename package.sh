@@ -161,9 +161,11 @@ build_render_cfg() {
     print_subtitle "编译 ce-render-cfg..."
 
     cd "$RENDER_CFG_DIR"
+    # go build 过程输出收敛到日志文件，避免刷屏；失败时提示日志位置便于排查
+    local build_log="${BASE_DIR}/dist/render-cfg-build.log"
     # 编译失败不阻塞打包（构建机 Go 版本过低等），与 Go 未安装同路径告警跳过
-    if ! make cross VERSION="$FIT2CLOUD_VERSION"; then
-        log_warn "ce-render-cfg 编译失败（构建机需 Go 1.21+），跳过编译"
+    if ! make cross VERSION="$FIT2CLOUD_VERSION" >"$build_log" 2>&1; then
+        log_warn "ce-render-cfg 编译失败（构建机需 Go 1.21+），跳过编译；详见 $build_log"
         cd "$BASE_DIR"
         return
     fi

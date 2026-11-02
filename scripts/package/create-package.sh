@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../../opt/fit2cloud/scripts/common.sh"
 
 create_package() {
-    print_title "步骤 5/5: 创建安装包"
+    print_title "5/5 创建安装包"
 
     local output_dir="$1"
     local installer_dir="$2"

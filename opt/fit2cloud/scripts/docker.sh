@@ -75,6 +75,8 @@ get_all_images() {
         value="${value%%#*}"
         value="${value%\"}"; value="${value#\"}"
         value="${value%\'}"; value="${value#\'}"
+        # 单引号是有意的：替换目标是字面 ${KEY} 文本，不能让 shell 先展开
+        # shellcheck disable=SC2016
         raw=${raw//'${'$key'}'/$value}
     done < "$env_file"
 
@@ -113,6 +115,7 @@ export_docker_images() {
     compose_images=$(get_all_images "$env_file")
     # Docker 镜像名不含空格，按空白拆分为数组是安全的
     local image_array
+    # shellcheck disable=SC2206
     image_array=($compose_images)
     local total=${#image_array[@]}
 
@@ -121,73 +124,115 @@ export_docker_images() {
         return 1
     fi
 
-    # 前置校验：所有镜像必须已在本地（由上一步 pull 保证）；
-    # 顺带采集镜像 ID 生成导出缓存的指纹（任一镜像更新即自然失效）
-    local missing=0
-    local fingerprint=""
+    # 缓存目录由调用方传入：按单镜像缓存 docker save 结果，命中即硬链接复用，
+    # 省掉未变化镜像的重复导出（docker save 单个约 1-10 分钟）
+    local cache_dir="${EXPORT_CACHE_DIR:-}"
+    if [[ -n "$cache_dir" ]]; then
+        ensure_dir "$cache_dir"
+    fi
+
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log_info "dry-run：将导出 $total 个镜像为独立 tar 到 $images_dir（跳过实际导出）"
+        return 0
+    fi
+
+    local exported=0 cached=0 failed=0
+
+    # 逐镜像导出为独立 tar（命名取镜像名去掉 registry 与 tag，与旧 installer 一致）：
+    #   - 安装侧 docker load 逐个加载，单文件损坏只影响该镜像
+    #   - 单镜像缓存可精确命中，比整组合并成一个大 tar 更易复用
     for image_name in "${image_array[@]}"; do
+        # 去掉 registry 前缀，再取 / 前最后一段作为文件名
+        local base_name="${image_name##*/}"
+        local tag="${base_name%%:*}"
+        local short_name="${tag%%@*}"
+        local out_file="$images_dir/${short_name}.tar"
+
+        # 镜像必须已在本地（由上一步 pull 保证），同时取 ID 作为缓存指纹
         local image_id
         image_id=$(docker image inspect --format '{{.Id}}' "$image_name" 2>/dev/null)
         if [[ -z "$image_id" ]]; then
             log_error "镜像不存在于本地，请先执行 pull 步骤: $image_name"
-            missing=$((missing + 1))
+            failed=$((failed + 1))
             continue
         fi
-        fingerprint+="${image_name} ${image_id}"$'\n'
+
+        # 缓存文件：key 取镜像 ID md5；sidecar md5 由导出时流式生成，
+        # manifest 阶段直接复用，免二次全量读取
+        local cache_tar="" cache_md5=""
+        if [[ -n "$cache_dir" ]]; then
+            local cache_key
+            cache_key=$(printf '%s' "${image_id}" | md5sum | awk '{print $1}')
+            cache_tar="$cache_dir/${cache_key}-${short_name}.tar"
+            cache_md5="$cache_tar.md5"
+            # 命中条件要求 tar 与 sidecar md5 同时存在（防止半截缓存被误命中）
+            if [[ -s "$cache_tar" && -s "$cache_md5" ]]; then
+                log_info "命中镜像导出缓存（${image_name} 未变化）"
+                ln "$cache_tar" "$out_file" 2>/dev/null || cp -f "$cache_tar" "$out_file"
+                cp -f "$cache_md5" "$out_file.md5"
+                cached=$((cached + 1))
+                exported=$((exported + 1))
+                continue
+            fi
+        fi
+
+        log_info_inline "导出 ${image_name}"
+        # docker save 曾出现守护进程挂死（0 CPU、0 字节增长）无限等待的情况，
+        # 用 timeout 兜底：默认 2 小时，可通过 DOCKER_SAVE_TIMEOUT 调整
+        if [[ -n "$cache_tar" ]]; then
+            # 先写 .part 临时文件，成功后原子改名 —— 进程被杀/断电不会留下半截缓存被误命中
+            local cache_part="${cache_tar}.part"
+            if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save "$image_name" \
+                | tee "$cache_part" | md5sum | awk '{print $1}' > "${cache_part}.md5"; then
+                log_step_error "失败"
+                log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）: ${image_name}"
+                rm -f "$cache_part" "${cache_part}.md5"
+                failed=$((failed + 1))
+                continue
+            fi
+            mv -f "$cache_part" "$cache_tar"
+            mv -f "${cache_part}.md5" "$cache_md5"
+            ln "$cache_tar" "$out_file" 2>/dev/null || cp -f "$cache_tar" "$out_file"
+            cp -f "$cache_md5" "$out_file.md5"
+        else
+            if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save -o "$out_file" "$image_name"; then
+                log_step_error "失败"
+                log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）: ${image_name}"
+                rm -f "$out_file"
+                failed=$((failed + 1))
+                continue
+            fi
+        fi
+        log_ok
+        exported=$((exported + 1))
     done
-    if [[ "$missing" -gt 0 ]]; then
-        return 1
-    fi
 
-    if [[ "${DRY_RUN:-false}" == "true" ]]; then
-        log_info "将导出 $total 个镜像为单文件 $images_dir/fit2cloud-images.tar（dry-run 跳过）"
-        return 0
-    fi
-
-    # 镜像导出缓存：按镜像 ID 列表指纹缓存 docker save 结果（约 20GB），
-    # 命中时硬链接复用，省去 30-50 分钟的重复导出；缓存目录由调用方传入
-    local cache_dir="${EXPORT_CACHE_DIR:-}"
-    local cache_tar=""
-    if [[ -n "$cache_dir" ]]; then
-        ensure_dir "$cache_dir"
-        local cache_key
-        cache_key=$(printf '%s' "$fingerprint" | md5sum | awk '{print $1}')
-        cache_tar="$cache_dir/${cache_key}.tar"
-        if [[ -f "$cache_tar" && -s "$cache_tar" ]]; then
-            log_info "命中镜像导出缓存（$total 个镜像未变化）: $cache_tar"
-            ln "$cache_tar" "$images_dir/fit2cloud-images.tar" 2>/dev/null \
-                || cp -f "$cache_tar" "$images_dir/fit2cloud-images.tar"
-            printf '%s\n' "${image_array[@]}" > "$images_dir/images.list"
-            log_success "镜像导出完成（缓存命中）: fit2cloud-images.tar（共 $total 个镜像）"
-            return 0
+    # 缓存清理：每个镜像名只保留最近 IMAGE_CACHE_KEEP 个版本，防止磁盘无限增长
+    if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
+        local keep=${IMAGE_CACHE_KEEP:-2} stale
+        stale=$(ls -t "$cache_dir"/*.tar 2>/dev/null | awk -F/ -v k="$keep" \
+            '{ n=$NF; sub(/^[0-9a-f]+-/, "", n); sub(/\.tar$/, "", n); if (seen[n]++ >= k) print }')
+        if [[ -n "$stale" ]]; then
+            # shellcheck disable=SC2086
+            echo "$stale" | xargs -r rm -f
+            # shellcheck disable=SC2086
+            echo "$stale" | sed 's/$/.md5/' | xargs -r rm -f
+            log_info "镜像导出缓存清理完成（每个镜像保留最近 ${keep} 份）"
         fi
     fi
 
-    # 单文件导出：共享 base 层只存一次，体积更小、安装时一次 docker load 完成
-    # docker save 曾出现守护进程挂死（0 CPU、0 字节增长）无限等待的情况，
-    # 用 timeout 兜底：默认 2 小时，可通过 DOCKER_SAVE_TIMEOUT 调整
-    if [[ -n "$cache_tar" ]]; then
-        # 导出直写缓存文件并流式计算 md5（写入 $cache_tar.md5），manifest 阶段免二次全量读取
-        if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save "${image_array[@]}" \
-            | tee "$cache_tar" | md5sum | awk '{print $1}' > "$cache_tar.md5"; then
-            log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）"
-            rm -f "$cache_tar" "$cache_tar.md5"
-            return 1
-        fi
-        ln "$cache_tar" "$images_dir/fit2cloud-images.tar" 2>/dev/null \
-            || cp -f "$cache_tar" "$images_dir/fit2cloud-images.tar"
-        # 只保留最近 IMAGE_CACHE_KEEP 个缓存条目（每个约 20GB）
-        ls -t "$cache_dir"/*.tar 2>/dev/null | tail -n +$(( ${IMAGE_CACHE_KEEP:-2} + 1 )) | xargs -r rm -f
-        ls -t "$cache_dir"/*.tar.md5 2>/dev/null | tail -n +$(( ${IMAGE_CACHE_KEEP:-2} + 1 )) | xargs -r rm -f
-    else
-        if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save -o "$images_dir/fit2cloud-images.tar" "${image_array[@]}"; then
-            log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）"
-            return 1
-        fi
-    fi
+    # 记录本次导出的镜像清单（安装侧对账用）
     printf '%s\n' "${image_array[@]}" > "$images_dir/images.list"
 
-    log_success "镜像导出完成: fit2cloud-images.tar（共 $total 个镜像）"
+    if [[ "$failed" -gt 0 ]]; then
+        log_error "镜像导出失败 $failed 个，成功 $exported/$total"
+        return 1
+    fi
+    if [[ "$cached" -gt 0 ]]; then
+        log_success "镜像导出完成: $exported 个镜像文件（缓存命中 $cached）"
+    else
+        log_success "镜像导出完成: $exported 个镜像文件"
+    fi
 }
 
 # =============================================================================
