@@ -33,14 +33,15 @@ log_timestamp() {
     date "+%H:%M:%S"
 }
 
+# 日志格式统一为：[HH:MM:SS] [级别] 消息（时间戳在级别前）
 log_info_inline() {
     local msg="$1"
     get_padding "$msg"
-    echo -ne "${GREEN}[INFO] ${NC} $1 $padding"
+    echo -ne "[$(log_timestamp)] ${GREEN}[INFO]${NC} $msg $padding"
 }
 
 log_info() {
-    echo -e "${GREEN}[INFO]${NC} [$(log_timestamp)] $1"
+    echo -e "[$(log_timestamp)] ${GREEN}[INFO]${NC} $1"
 }
 
 log_step_warn() {
@@ -48,7 +49,7 @@ log_step_warn() {
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} [$(log_timestamp)] $1"
+    echo -e "[$(log_timestamp)] ${YELLOW}[WARN]${NC} $1"
 }
 
 log_step_error() {
@@ -56,7 +57,7 @@ log_step_error() {
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} [$(log_timestamp)] $1" >&2
+    echo -e "[$(log_timestamp)] ${RED}[ERROR]${NC} $1" >&2
 }
 
 log_ok() {
@@ -68,19 +69,17 @@ log_step_success() {
 }
 
 log_success() {
-    echo -e "${CYAN}[SUCCESS]${NC} [$(log_timestamp)] $1"
+    echo -e "[$(log_timestamp)] ${CYAN}[SUCCESS]${NC} $1"
 }
 
-# 主标题（紧凑单行）：步骤/段落分隔，行内打印不折行、不占额外空行
-# 例: [1/5] 准备安装包文件
+# 步骤标题（紧凑单行）：========== 1/5 准备安装包文件 ==========
 print_title() {
-    echo -e "${CYAN}========== [${1}] ==========${NC}"
+    echo -e "${CYAN}========== $1 ==========${NC}"
 }
 
 # 子标题（紧凑单行）：步骤内子动作
-# 例: ── 导出 Docker 镜像...
 print_subtitle() {
-    echo -e "${BLUE}── ${1} ${NC}"
+    echo -e "${BLUE}── $1 ${NC}"
 }
 
 # =============================================================================
@@ -263,24 +262,35 @@ safe_execute() {
 download_file() {
     local url="$1"
     local output="$2"
+    local max_try=${DOWNLOAD_MAX_TRY:-3}
+    local attempt=1
 
-    # 终端下显示进度，CI/无终端环境静默（-sS 只报错误），避免进度条刷屏构建日志
-    if cmd_exists curl; then
-        if [[ -t 1 ]]; then
-            curl -L --progress-bar -f -o "$output" "$url"
+    # 带重试与断点续传（-C -/-c）：传输中断后从已下载部分继续，最多重试 max_try 次
+    while :; do
+        if cmd_exists curl; then
+            if [[ -t 1 ]]; then
+                curl -L --progress-bar -f -C - -o "$output" "$url" && return 0
+            else
+                curl -L -sS -f -C - -o "$output" "$url" && return 0
+            fi
+        elif cmd_exists wget; then
+            if [[ -t 1 ]]; then
+                wget --show-progress -c -O "$output" "$url" && return 0
+            else
+                wget -q -c -O "$output" "$url" && return 0
+            fi
         else
-            curl -L -sS -f -o "$output" "$url"
+            log_error "wget 和 curl 都未安装"
+            return 1
         fi
-    elif cmd_exists wget; then
-        if [[ -t 1 ]]; then
-            wget --show-progress -O "$output" "$url"
-        else
-            wget -q -O "$output" "$url"
+        if [[ $attempt -ge $max_try ]]; then
+            log_error "下载失败（已尝试 ${max_try} 次）: $url"
+            return 1
         fi
-    else
-        log_error "wget 和 curl 都未安装"
-        return 1
-    fi
+        log_warn "下载中断，断点续传重试（$attempt/$max_try）: $(basename "$url")"
+        attempt=$((attempt + 1))
+        sleep 2
+    done
 }
 
 # =============================================================================
