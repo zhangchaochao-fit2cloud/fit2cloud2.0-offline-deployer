@@ -34,12 +34,6 @@ create_package() {
         echo "version=${build_id}"
         echo "platform=${platform}"
         echo "build_time=${build_time}"
-        # 记录 Python 实验版本信息
-        if [[ "${WITH_PYTHON:-false}" == "true" && -f "${installer_dir}/fit2cloud/scripts_py/.version" ]]; then
-            echo "python_version=experimental"
-            echo "python_build=$(grep '^build_version=' "${installer_dir}/fit2cloud/scripts_py/.version" | head -1 | cut -d= -f2)"
-            echo "python_build_time=$(grep '^build_time=' "${installer_dir}/fit2cloud/scripts_py/.version" | head -1 | cut -d= -f2)"
-        fi
         if [[ -d "${installer_dir}/docker-images" ]]; then
             # 优先复用导出阶段已算好的 <tar>.md5（流式生成），避免对约 20GB 的镜像 tar 再做一次全量读取
             (cd "${installer_dir}/docker-images" && \

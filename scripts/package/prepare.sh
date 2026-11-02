@@ -39,21 +39,5 @@ prepare() {
     rm -f "$installer_dir/fit2cloud/install.env" "$installer_dir/fit2cloud/runtime.env" 2>/dev/null || true
     find "$installer_dir" -name ".DS_Store" -delete 2>/dev/null || true
 
-    # Python 实验版本：若构建时启用了 --with-python，将 scripts_py/ 复制进安装包
-    if [[ "${WITH_PYTHON:-false}" == "true" ]]; then
-        if [[ -d "$base_dir/opt/fit2cloud/scripts_py" ]]; then
-            cp -rp "$base_dir/opt/fit2cloud/scripts_py" "$installer_dir/fit2cloud/scripts_py"
-            # 写版本标记：安装时 install.py 可读此文件确认 Python 脚本已存在
-            cat > "$installer_dir/fit2cloud/scripts_py/.version" << EOF
-enabled=true
-build_version=${FIT2CLOUD_VERSION}.${BUILD_NUMBER}
-build_time=$(date "+%Y-%m-%d %H:%M")
-EOF
-            log_info "Python 实验版本已包含（scripts_py/）"
-        else
-            log_warn "scripts_py/ 目录不存在，跳过 Python 版本打包"
-        fi
-    fi
-
     log_success "安装包文件准备完成"
 }

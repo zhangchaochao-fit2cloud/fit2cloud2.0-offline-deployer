@@ -28,7 +28,6 @@ source "$MW_DIR/telegraf.sh"
 COMPLETED_STEPS=""
 PROGRESS_FILE=""
 VERIFY_IMAGES=false
-USE_PYTHON=false
 # 命令行开关默认值（set -u 下必须初始化）
 SILENT_MODE=false
 INSTALL_DIR=""
@@ -95,7 +94,6 @@ Fit2Cloud 2.0 安装脚本
     --with-nginx            安装 Nginx 反向代理
     --force-reinstall       忽略已完成的步骤，强制重新安装
     --verify-images         全量 md5 校验 Docker 镜像包（默认仅做轻量校验）
-    --python                使用 Python 实验版本安装（需安装包已包含 scripts_py/）
 
 配置文件分层:
     install.env   安装期变量：部署模式、安装路径、访问地址、集群、组件开关
@@ -123,7 +121,6 @@ parse_args() {
             --with-nginx)    WITH_NGINX=true; shift ;;
             --force-reinstall) FORCE_REINSTALL=true; shift ;;
             --verify-images) VERIFY_IMAGES=true; shift ;;
-            --python) USE_PYTHON=true; shift ;;
             *)               log_error "未知参数: $1"; show_help; exit 1 ;;
         esac
     done
@@ -809,25 +806,6 @@ main() {
     # 交互模式：先确认核心配置（-s 静默安装全部取默认值）
     if [[ "$SILENT_MODE" != "true" ]]; then
         interactive_config
-    fi
-
-    # Python 实验版本入口
-    if [[ "${USE_PYTHON:-false}" == "true" ]]; then
-        local scripts_py="$FIT2CLOUD_DIR/scripts_py/install.py"
-        if [[ ! -f "$scripts_py" ]]; then
-            log_error "未找到 Python 安装脚本: $scripts_py"
-            log_info "请确保安装包包含了 scripts_py/ 目录（构建时使用 --with-python）"
-            exit 1
-        fi
-        log_info "使用 Python 实验版本安装..."
-        log_info "Python 脚本: $scripts_py"
-        echo
-        python3 "$scripts_py" --dir "$INSTALL_DIR" \
-            --install-env "$INSTALL_ENV" \
-            --runtime-env "$RUNTIME_ENV" \
-            --silent \
-            "$@"
-        exit $?
     fi
 
     do_install

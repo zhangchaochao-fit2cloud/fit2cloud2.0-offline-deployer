@@ -19,7 +19,6 @@ OUTPUT_DIR="$BASE_DIR/dist"
 DRY_RUN=false
 CLEAN_TEMP=false
 SKIP_RENDER_CFG=false
-WITH_PYTHON=false
 PLUGIN_PACKAGES=""
 DEPLOYMENT_PACKAGES=""
 EXTENSION_PACKAGES=""
@@ -27,7 +26,6 @@ ENV_FILE=""
 # CLI 显式传入的参数标记（--env-file 只填充未显式指定的项）
 OPT_VERSION="" OPT_BUILD_NUMBER="" OPT_REGISTRY="" OPT_OUTPUT_DIR=""
 OPT_PLATFORM="" OPT_PLUGIN_PACKAGES="" OPT_DEPLOYMENT_PACKAGES="" OPT_EXTENSION_PACKAGES=""
-OPT_WITH_PYTHON=""
 
 show_help() {
     cat << EOF
@@ -50,7 +48,6 @@ Fit2Cloud 2.0 打包脚本
     -e, --extension-packages 扩展包 URL（多个用逗号分隔）
     --env-file FILE         打包环境文件（如 packaging.env，仅填充未在命令行指定的项）
     --skip-render-cfg       跳过 ce-render-cfg 编译
-    --with-python           在安装包中包含 Python 版本脚本（实验性）
 
 示例:
     $0 -v 2.0.1 -b 100
@@ -78,7 +75,6 @@ parse_args() {
             -e|--extension-packages) EXTENSION_PACKAGES="$2"; OPT_EXTENSION_PACKAGES=1; shift 2 ;;
             --env-file)      ENV_FILE="$2"; shift 2 ;;
             --skip-render-cfg) SKIP_RENDER_CFG=true; shift ;;
-            --with-python)   WITH_PYTHON=true; OPT_WITH_PYTHON=1; shift ;;
             *)               log_error "未知参数: $1"; show_help; exit 1 ;;
         esac
     done
@@ -115,7 +111,6 @@ load_env_file() {
             PLUGIN_PACKAGES)         [[ -z "$OPT_PLUGIN_PACKAGES" ]] && PLUGIN_PACKAGES="$value" ;;
             DEPLOYMENT_PACKAGES)     [[ -z "$OPT_DEPLOYMENT_PACKAGES" ]] && DEPLOYMENT_PACKAGES="$value" ;;
             EXTENSION_PACKAGES)      [[ -z "$OPT_EXTENSION_PACKAGES" ]] && EXTENSION_PACKAGES="$value" ;;
-            WITH_PYTHON)             [[ -z "$OPT_WITH_PYTHON" ]] && WITH_PYTHON="$value" ;;
             DOCKER_PACKAGE_URL|DOCKER_PACKAGE_URL_ARM64|DOCKER_PACKAGE_URL_RHEL8|TELEGRAF_PACKAGE_URL|MINIO_DOCKER_IMAGE|DOCKER_SAVE_TIMEOUT)
                 export "$key=$value"
                 ;;
@@ -223,7 +218,7 @@ main() {
     # 每次构建清理输出目录，保证包内容只来自本次源码（可复现构建）
     rm -rf "$INSTALLER_DIR" "$CLOUD_PLUGINS_DIR"
 
-    export REGISTRY_URL FIT2CLOUD_VERSION PLATFORM DRY_RUN WITH_PYTHON
+    export REGISTRY_URL FIT2CLOUD_VERSION PLATFORM DRY_RUN
 
     source "$PACKAGE_DIR/prepare.sh"
     prepare "$OUTPUT_DIR" "$INSTALLER_DIR" "$BASE_DIR"
