@@ -29,6 +29,11 @@ COMPLETED_STEPS=""
 PROGRESS_FILE=""
 VERIFY_IMAGES=false
 USE_PYTHON=false
+# 命令行开关默认值（set -u 下必须初始化）
+SILENT_MODE=false
+INSTALL_DIR=""
+WITH_NGINX=false
+FORCE_REINSTALL=false
 
 step_done() {
     local step="$1"
@@ -124,21 +129,39 @@ parse_args() {
     done
 }
 
-load_env() {
+ensure_install_config() {
+    # 免配置：配置文件不存在时按 example 自动生成，解压后直接 bash install.sh 即可安装
     if [[ ! -f "$INSTALL_ENV" ]]; then
-        if [[ -f "$FIT2CLOUD_DIR/.env" ]]; then
+        if [[ -f "$FIT2CLOUD_DIR/install.env.example" ]]; then
+            cp "$FIT2CLOUD_DIR/install.env.example" "$INSTALL_ENV"
+            # 打包期写入的 .env（镜像仓库/平台/镜像 tag/中间件镜像）优先于 example 默认值，
+            # 保证安装侧镜像名与离线镜像包 docker load 进来的名称一致
+            if [[ -f "$FIT2CLOUD_DIR/.env" ]]; then
+                local key value
+                while IFS='=' read -r key value; do
+                    key="${key//[[:space:]]/}"
+                    [[ -z "$key" || "$key" == \#* ]] && continue
+                    set_env_value "$key" "$value" "$INSTALL_ENV"
+                done < "$FIT2CLOUD_DIR/.env"
+            fi
+            log_info "未找到 install.env，已按默认值自动生成: $INSTALL_ENV"
+        elif [[ -f "$FIT2CLOUD_DIR/.env" ]]; then
             INSTALL_ENV="$FIT2CLOUD_DIR/.env"
-            log_warn "未找到 install.env，兼容使用旧版 .env: $INSTALL_ENV"
+            log_warn "未找到 install.env 与 example，兼容使用打包 .env: $INSTALL_ENV"
         else
             log_error "安装期配置不存在: $INSTALL_ENV"
-            log_info "请先创建: cp install.env.example install.env && cp runtime.env.example runtime.env"
             exit 1
         fi
     fi
 
-    if [[ ! -f "$RUNTIME_ENV" ]]; then
-        log_warn "运行期配置不存在: $RUNTIME_ENV（中间件等参数将使用内置默认值）"
+    if [[ ! -f "$RUNTIME_ENV" && -f "$FIT2CLOUD_DIR/runtime.env.example" ]]; then
+        cp "$FIT2CLOUD_DIR/runtime.env.example" "$RUNTIME_ENV"
+        log_info "未找到 runtime.env，已按默认值自动生成: $RUNTIME_ENV"
     fi
+}
+
+load_env() {
+    ensure_install_config
 
     CE_INSTALL_PATH=$(get_env_value CE_INSTALL_PATH "/opt" "$INSTALL_ENV")
     CE_ACCESS_PORT=$(get_env_value CE_ACCESS_PORT "80" "$INSTALL_ENV")
@@ -719,9 +742,74 @@ do_install() {
     show_completion_info
 }
 
+# 交互式配置确认：不传 -s 时提问核心配置项（与旧版安装向导一致），回车采用默认值
+interactive_config() {
+    local v ext_minio nginx confirm
+
+    echo
+    log_info "========== 安装配置（直接回车采用默认值） =========="
+
+    v=$(get_env_value CE_INSTALL_PATH "/opt" "$INSTALL_ENV")
+    read -r -p "安装路径 [$v]: " input || input=""
+    [[ -n "$input" ]] && set_env_value CE_INSTALL_PATH "$input" "$INSTALL_ENV"
+
+    v=$(get_env_value CE_ACCESS_PORT "80" "$INSTALL_ENV")
+    read -r -p "访问端口 [$v]: " input || input=""
+    [[ -n "$input" ]] && set_env_value CE_ACCESS_PORT "$input" "$INSTALL_ENV"
+
+    read -r -p "访问 IP（已自动检测） [$CE_ACCESS_IP]: " input || input=""
+    if [[ -n "$input" && "$input" != "$CE_ACCESS_IP" ]]; then
+        CE_ACCESS_IP="$input"
+        set_env_value CE_ACCESS_IP "$input" "$INSTALL_ENV"
+    fi
+
+    read -r -p "是否使用外部 MinIO？[y/N]: " input || input=""
+    if [[ "$input" =~ ^[Yy] ]]; then
+        set_env_value CE_EXTERNAL_MINIO true "$INSTALL_ENV"
+        while true; do
+            read -r -p "MinIO 访问地址（如 http://10.1.13.111:9001）: " input || input=""
+            [[ -n "$input" ]] && break
+            log_warn "外部 MinIO 访问地址不能为空"
+        done
+        set_env_value CE_MINIO_ENDPOINT "$input" "$INSTALL_ENV"
+        read -r -p "MinIO accessKey: " input || input=""
+        set_env_value CE_MINIO_ACCESS_KEY "$input" "$INSTALL_ENV"
+        read -r -p "MinIO secretKey: " input || input=""
+        set_env_value CE_MINIO_SECRET_KEY "$input" "$INSTALL_ENV"
+        read -r -p "MinIO bucket: " input || input=""
+        set_env_value CE_MINIO_DEFAULT_BUCKET "$input" "$INSTALL_ENV"
+    fi
+
+    read -r -p "是否安装 Nginx 反向代理？[y/N]: " input || input=""
+    [[ "$input" =~ ^[Yy] ]] && set_env_value CE_INSTALL_NGINX true "$INSTALL_ENV"
+
+    # 摘要确认
+    echo
+    log_info "---------- 配置摘要 ----------"
+    log_info "安装路径: $(get_env_value CE_INSTALL_PATH "/opt" "$INSTALL_ENV")/fit2cloud"
+    log_info "访问地址: $(get_env_value CE_ACCESS_PROTOCOL "http" "$INSTALL_ENV")://$(get_env_value CE_ACCESS_IP "-" "$INSTALL_ENV"):$(get_env_value CE_ACCESS_PORT "80" "$INSTALL_ENV")"
+    log_info "部署模式: $(get_env_value CE_MODE "standalone" "$INSTALL_ENV")"
+    ext_minio=$(get_env_value CE_EXTERNAL_MINIO "false" "$INSTALL_ENV")
+    log_info "MinIO: $([[ "$ext_minio" == "true" ]] && echo "外部" || echo "内置")"
+    nginx=$(get_env_value CE_INSTALL_NGINX "false" "$INSTALL_ENV")
+    log_info "Nginx 反代: $([[ "$nginx" == "true" ]] && echo "安装" || echo "不安装")"
+    log_info "配置文件: $INSTALL_ENV / $RUNTIME_ENV"
+    echo
+    read -r -p "确认以上配置并开始安装？(Y/n): " confirm || confirm=""
+    if [[ "$confirm" =~ ^[Nn] ]]; then
+        log_info "已取消。可修改 ${INSTALL_ENV} / ${RUNTIME_ENV} 后重新执行安装"
+        exit 0
+    fi
+}
+
 main() {
     parse_args "$@"
     load_env
+
+    # 交互模式：先确认核心配置（-s 静默安装全部取默认值）
+    if [[ "$SILENT_MODE" != "true" ]]; then
+        interactive_config
+    fi
 
     # Python 实验版本入口
     if [[ "${USE_PYTHON:-false}" == "true" ]]; then
@@ -742,18 +830,7 @@ main() {
         exit $?
     fi
 
-    if [[ "$SILENT_MODE" == "true" ]]; then
-        do_install
-    else
-        show_install_info
-        echo
-        read -r -p "是否继续安装？(y/N): " confirm
-        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-            log_info "安装已取消"
-            exit 0
-        fi
-        do_install
-    fi
+    do_install
 }
 
 main "$@"
