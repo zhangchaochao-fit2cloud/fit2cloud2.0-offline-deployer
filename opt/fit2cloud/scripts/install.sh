@@ -777,44 +777,142 @@ do_install() {
     show_completion_info
 }
 
-# 交互式配置确认：不传 -s 时提问核心配置项（与旧版安装向导一致），回车采用默认值
+# 交互提问通用函数：说明文字 + 带默认值提示 + 可选校验器（返回非 0 则重问）
+# 值通过 stdout 返回；read 的提示语走 stderr，不会污染捕获
+ask_value() {
+    local desc="$1" current="$2" validator="${3:-}" input
+    while :; do
+        read -r -p "${desc} [${current}]: " input || input=""
+        input="${input:-$current}"
+        if [[ -n "$validator" ]] && ! "$validator" "$input"; then
+            log_warn "输入不合法，请重新输入"
+            continue
+        fi
+        printf '%s\n' "$input"
+        return 0
+    done
+}
+
+validate_port()     { [[ "$1" =~ ^[0-9]+$ ]] && (( 1 <= $1 && $1 <= 65535 )); }
+validate_ip()       { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
+validate_abs_path() { [[ "$1" == /* ]]; }
+
+# 环境快照（轻量只读，不做告警——正式检查在 do_install 的 check_environment）
+show_environment_snapshot() {
+    local cores mem_gb disk_avail_gb
+    cores=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo "?")
+    mem_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo "?")
+    disk_avail_gb=$(df -BG "$CE_INSTALL_PATH" 2>/dev/null | awk 'NR==2 {gsub("G","",$4); print $4}' || echo "?")
+    log_info "CPU: ${cores} 核 | 内存: ${mem_gb} GB | 磁盘可用: ${disk_avail_gb} GB"
+}
+
+# 欢迎面板：交互模式与静默模式共用，展示包信息与将使用的配置
+show_welcome() {
+    local pkg_version
+    pkg_version=$(head -1 "$FIT2CLOUD_DIR/conf/version" 2>/dev/null || echo "未知")
+    local platform image_addr access_path access_port ext_minio
+
+    platform=$(get_env_value PLATFORM "amd64" "$INSTALL_ENV")
+    image_addr=$(get_env_value IMAGE_ADDRESS "-" "$INSTALL_ENV")
+    access_path=$(get_env_value CE_INSTALL_PATH "/opt" "$INSTALL_ENV")
+    access_port=$(get_env_value CE_ACCESS_PORT "80" "$INSTALL_ENV")
+    ext_minio=$(get_env_value CE_EXTERNAL_MINIO "false" "$INSTALL_ENV")
+
+    print_title "Fit2Cloud 2.0 离线安装"
+    log_info "安装包版本: ${pkg_version}"
+    log_info "目标平台:   ${platform}（镜像仓库: ${image_addr}）"
+    log_info "配置文件:   ${INSTALL_ENV}"
+    log_info "           ${RUNTIME_ENV}"
+    log_info "环境快照:   $(get_local_ip 2>/dev/null || echo '?')"
+    show_environment_snapshot
+    echo
+    log_info "将使用的默认配置（交互模式可逐项修改，静默模式直接使用）:"
+    log_info "  安装路径:  ${access_path}/fit2cloud"
+    local ip_show
+    ip_show=$(get_env_value CE_ACCESS_IP "" "$INSTALL_ENV")
+    log_info "  访问地址:  http://${ip_show:-(安装时自动检测本机IP)}:${access_port}"
+    log_info "  MinIO:     $([[ "$ext_minio" == "true" ]] && echo "外部" || echo "内置")"
+    echo
+}
+
+# 交互式配置向导：不传 -s 时提问核心配置项（与旧版安装向导一致），回车采用默认值
 interactive_config() {
-    local v ext_minio nginx confirm
+    local input minio_mode confirm
 
     echo
-    log_info "========== 安装配置（直接回车采用默认值） =========="
+    log_info "开始配置（直接回车采用默认值；可随时 Ctrl+C 退出后编辑配置文件重跑）"
 
-    v=$(get_env_value CE_INSTALL_PATH "/opt" "$INSTALL_ENV")
-    read -r -p "安装路径 [$v]: " input || input=""
-    [[ -n "$input" ]] && set_env_value CE_INSTALL_PATH "$input" "$INSTALL_ENV"
+    # 部署模式
+    log_info "部署模式: 1) standalone 单机（默认）  2) cluster 集群"
+    while :; do
+        read -r -p "请选择 [1]: " input || input=""
+        input="${input:-1}"
+        [[ "$input" == "1" || "$input" == "2" ]] && break
+        log_warn "请输入 1 或 2"
+    done
+    if [[ "$input" == "2" ]]; then
+        set_env_value CE_MODE cluster "$INSTALL_ENV"
+        log_info "集群模式：中间件将按 install.env 中 CE_CLUSTER_* 配置部署"
+    else
+        set_env_value CE_MODE standalone "$INSTALL_ENV"
+    fi
 
-    v=$(get_env_value CE_ACCESS_PORT "80" "$INSTALL_ENV")
-    read -r -p "访问端口 [$v]: " input || input=""
-    [[ -n "$input" ]] && set_env_value CE_ACCESS_PORT "$input" "$INSTALL_ENV"
+    # 安装路径（绝对路径校验 + 已存在提示）
+    while :; do
+        input=$(ask_value "安装路径（将以 <路径>/fit2cloud 作为安装目录）" \
+            "$(get_env_value CE_INSTALL_PATH "/opt" "$INSTALL_ENV")" validate_abs_path)
+        set_env_value CE_INSTALL_PATH "$input" "$INSTALL_ENV"
+        if [[ -d "${input}/fit2cloud" ]]; then
+            local yn
+            read -r -p "目录 ${input}/fit2cloud 已存在，将复用并覆盖部署，是否继续？[Y/n]: " yn || yn=""
+            [[ ! "$yn" =~ ^[Nn] ]] && break
+        else
+            break
+        fi
+    done
 
-    read -r -p "访问 IP（已自动检测） [$CE_ACCESS_IP]: " input || input=""
-    if [[ -n "$input" && "$input" != "$CE_ACCESS_IP" ]]; then
+    # 访问端口 / IP
+    set_env_value CE_ACCESS_PORT \
+        "$(ask_value "访问端口" "$(get_env_value CE_ACCESS_PORT "80" "$INSTALL_ENV")" validate_port)" "$INSTALL_ENV"
+
+    input=$(ask_value "访问 IP（已自动检测，多网卡时可指定）" "$CE_ACCESS_IP" validate_ip)
+    if [[ "$input" != "$CE_ACCESS_IP" ]]; then
         CE_ACCESS_IP="$input"
         set_env_value CE_ACCESS_IP "$input" "$INSTALL_ENV"
     fi
 
-    read -r -p "是否使用外部 MinIO？[y/N]: " input || input=""
-    if [[ "$input" =~ ^[Yy] ]]; then
+    # MinIO 内置/外部
+    read -r -p "是否使用外部 MinIO？[y/N]: " minio_mode || minio_mode=""
+    if [[ "$minio_mode" =~ ^[Yy] ]]; then
         set_env_value CE_EXTERNAL_MINIO true "$INSTALL_ENV"
-        while true; do
-            read -r -p "MinIO 访问地址（如 http://10.1.13.111:9001）: " input || input=""
+        while :; do
+            input=$(ask_value "MinIO 访问地址（如 http://10.1.13.111:9001）" "" )
             [[ -n "$input" ]] && break
-            log_warn "外部 MinIO 访问地址不能为空"
         done
         set_env_value CE_MINIO_ENDPOINT "$input" "$INSTALL_ENV"
-        read -r -p "MinIO accessKey: " input || input=""
+        while :; do
+            input=$(ask_value "MinIO accessKey" "")
+            [[ -n "$input" ]] && break
+            log_warn "accessKey 不能为空"
+        done
         set_env_value CE_MINIO_ACCESS_KEY "$input" "$INSTALL_ENV"
-        read -r -p "MinIO secretKey: " input || input=""
+        while :; do
+            input=$(ask_value "MinIO secretKey" "")
+            [[ -n "$input" ]] && break
+            log_warn "secretKey 不能为空"
+        done
         set_env_value CE_MINIO_SECRET_KEY "$input" "$INSTALL_ENV"
-        read -r -p "MinIO bucket: " input || input=""
+        while :; do
+            input=$(ask_value "MinIO bucket" "")
+            [[ -n "$input" ]] && break
+            log_warn "bucket 不能为空"
+        done
         set_env_value CE_MINIO_DEFAULT_BUCKET "$input" "$INSTALL_ENV"
+    else
+        set_env_value CE_EXTERNAL_MINIO false "$INSTALL_ENV"
     fi
 
+    # Nginx
     read -r -p "是否安装 Nginx 反向代理？[y/N]: " input || input=""
     [[ "$input" =~ ^[Yy] ]] && set_env_value CE_INSTALL_NGINX true "$INSTALL_ENV"
 
@@ -837,13 +935,25 @@ interactive_config() {
     fi
 }
 
+# 静默模式说明：明确告知使用默认值与自定义方式（不阻塞）
+show_silent_banner() {
+    log_info "静默安装模式：全部使用默认值（见上方面板），不进行交互确认"
+    log_info "如需自定义（路径/端口/MinIO/集群等）：修改 ${INSTALL_ENV} 或 ${RUNTIME_ENV} 后重新执行安装"
+}
+
 main() {
     parse_args "$@"
     load_env
 
-    # 交互模式：先确认核心配置（-s 静默安装全部取默认值）
+    # 欢迎面板：展示包信息/环境快照/将使用的默认配置（两种模式共用）
+    show_welcome
+
+    # 交互模式：向导逐项确认；静默模式：提示默认值与自定义方式后直接安装
     if [[ "$SILENT_MODE" != "true" ]]; then
         interactive_config
+    else
+        show_silent_banner
+        echo
     fi
 
     do_install
