@@ -250,7 +250,9 @@ main() {
     pull_images "$INSTALLER_ENV" "$OUTPUT_DIR/pull-report.json"
 
     source "$PACKAGE_DIR/export-images.sh"
-    export_images "$DOCKER_IMAGES_DIR" "$INSTALLER_ENV" "$OUTPUT_DIR/export-report.json"
+    # 镜像导出缓存放在工作区（dist 之外），Naginator 重试/当日重跑可直接命中省 30-50 分钟
+    EXPORT_CACHE_DIR="$BASE_DIR/.image-cache" \
+        export_images "$DOCKER_IMAGES_DIR" "$INSTALLER_ENV" "$OUTPUT_DIR/export-report.json"
 
     source "$PACKAGE_DIR/download-tools.sh"
     download_tools "$TOOLS_DIR"

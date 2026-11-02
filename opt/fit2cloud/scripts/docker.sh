@@ -121,13 +121,19 @@ export_docker_images() {
         return 1
     fi
 
-    # 前置校验：所有镜像必须已在本地（由上一步 pull 保证）
+    # 前置校验：所有镜像必须已在本地（由上一步 pull 保证）；
+    # 顺带采集镜像 ID 生成导出缓存的指纹（任一镜像更新即自然失效）
     local missing=0
+    local fingerprint=""
     for image_name in "${image_array[@]}"; do
-        if ! docker image inspect "$image_name" >/dev/null 2>&1; then
+        local image_id
+        image_id=$(docker image inspect --format '{{.Id}}' "$image_name" 2>/dev/null)
+        if [[ -z "$image_id" ]]; then
             log_error "镜像不存在于本地，请先执行 pull 步骤: $image_name"
             missing=$((missing + 1))
+            continue
         fi
+        fingerprint+="${image_name} ${image_id}"$'\n'
     done
     if [[ "$missing" -gt 0 ]]; then
         return 1
@@ -138,12 +144,46 @@ export_docker_images() {
         return 0
     fi
 
+    # 镜像导出缓存：按镜像 ID 列表指纹缓存 docker save 结果（约 20GB），
+    # 命中时硬链接复用，省去 30-50 分钟的重复导出；缓存目录由调用方传入
+    local cache_dir="${EXPORT_CACHE_DIR:-}"
+    local cache_tar=""
+    if [[ -n "$cache_dir" ]]; then
+        ensure_dir "$cache_dir"
+        local cache_key
+        cache_key=$(printf '%s' "$fingerprint" | md5sum | awk '{print $1}')
+        cache_tar="$cache_dir/${cache_key}.tar"
+        if [[ -f "$cache_tar" && -s "$cache_tar" ]]; then
+            log_info "命中镜像导出缓存（$total 个镜像未变化）: $cache_tar"
+            ln "$cache_tar" "$images_dir/fit2cloud-images.tar" 2>/dev/null \
+                || cp -f "$cache_tar" "$images_dir/fit2cloud-images.tar"
+            printf '%s\n' "${image_array[@]}" > "$images_dir/images.list"
+            log_success "镜像导出完成（缓存命中）: fit2cloud-images.tar（共 $total 个镜像）"
+            return 0
+        fi
+    fi
+
     # 单文件导出：共享 base 层只存一次，体积更小、安装时一次 docker load 完成
     # docker save 曾出现守护进程挂死（0 CPU、0 字节增长）无限等待的情况，
     # 用 timeout 兜底：默认 2 小时，可通过 DOCKER_SAVE_TIMEOUT 调整
-    if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save -o "$images_dir/fit2cloud-images.tar" "${image_array[@]}"; then
-        log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）"
-        return 1
+    if [[ -n "$cache_tar" ]]; then
+        # 导出直写缓存文件并流式计算 md5（写入 $cache_tar.md5），manifest 阶段免二次全量读取
+        if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save "${image_array[@]}" \
+            | tee "$cache_tar" | md5sum | awk '{print $1}' > "$cache_tar.md5"; then
+            log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）"
+            rm -f "$cache_tar" "$cache_tar.md5"
+            return 1
+        fi
+        ln "$cache_tar" "$images_dir/fit2cloud-images.tar" 2>/dev/null \
+            || cp -f "$cache_tar" "$images_dir/fit2cloud-images.tar"
+        # 只保留最近 IMAGE_CACHE_KEEP 个缓存条目（每个约 20GB）
+        ls -t "$cache_dir"/*.tar 2>/dev/null | tail -n +$(( ${IMAGE_CACHE_KEEP:-2} + 1 )) | xargs -r rm -f
+        ls -t "$cache_dir"/*.tar.md5 2>/dev/null | tail -n +$(( ${IMAGE_CACHE_KEEP:-2} + 1 )) | xargs -r rm -f
+    else
+        if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save -o "$images_dir/fit2cloud-images.tar" "${image_array[@]}"; then
+            log_error "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）"
+            return 1
+        fi
     fi
     printf '%s\n' "${image_array[@]}" > "$images_dir/images.list"
 

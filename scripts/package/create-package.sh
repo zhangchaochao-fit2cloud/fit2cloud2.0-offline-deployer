@@ -41,7 +41,16 @@ create_package() {
             echo "python_build_time=$(grep '^build_time=' "${installer_dir}/fit2cloud/scripts_py/.version" | head -1 | cut -d= -f2)"
         fi
         if [[ -d "${installer_dir}/docker-images" ]]; then
-            (cd "${installer_dir}/docker-images" && md5sum ./*.tar 2>/dev/null)
+            # 优先复用导出阶段已算好的 <tar>.md5（流式生成），避免对约 20GB 的镜像 tar 再做一次全量读取
+            (cd "${installer_dir}/docker-images" && \
+                for t in ./*.tar; do
+                    [[ -e "$t" ]] || continue
+                    if [[ -s "${t}.md5" ]]; then
+                        echo "$(cat "${t}.md5")  ${t#./}"
+                    else
+                        md5sum "$t"
+                    fi
+                done 2>/dev/null)
         fi
     } > "${installer_dir}/fit2cloud/manifest.txt"
     log_info "包清单已生成: fit2cloud/manifest.txt"
