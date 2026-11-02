@@ -1,17 +1,21 @@
 #!/bin/bash
 # 库文件：被入口脚本 source 引入；错误处理(set -euo pipefail)由入口统一提供，勿在此单独添加
 
+# source 守卫：本文件含 readonly 常量，重复 source 会报错；且重复定义函数无意义
+[[ -n "${_F2C_COMMON_SOURCED:-}" ]] && return 0
+
 # =============================================================================
 # Fit2Cloud 2.0 通用工具函数库
 # =============================================================================
 
 # 颜色定义
-RED=$'\033[0;31m'
-GREEN=$'\033[0;32m'
-YELLOW=$'\033[1;33m'
-BLUE=$'\033[0;34m'
-CYAN=$'\033[0;36m'
-NC=$'\033[0m'
+readonly RED=$'\033[0;31m'
+readonly GREEN=$'\033[0;32m'
+readonly YELLOW=$'\033[1;33m'
+readonly BLUE=$'\033[0;34m'
+readonly CYAN=$'\033[0;36m'
+readonly NC=$'\033[0m'
+readonly _F2C_COMMON_SOURCED=1
 
 # =============================================================================
 # 日志输出函数
@@ -37,49 +41,49 @@ log_timestamp() {
 log_info_inline() {
     local msg="$1"
     get_padding "$msg"
-    echo -ne "[$(log_timestamp)] ${GREEN}[INFO]${NC} $msg $padding"
+    printf '%b' "[$(log_timestamp)] ${GREEN}[INFO]${NC} $msg $padding"
 }
 
 log_info() {
-    echo -e "[$(log_timestamp)] ${GREEN}[INFO]${NC} $1"
+    printf '%b\n' "[$(log_timestamp)] ${GREEN}[INFO]${NC} $1"
 }
 
 log_step_warn() {
-    echo -e "${YELLOW}$1${NC}"
+    printf '%b\n' "${YELLOW}$1${NC}"
 }
 
 log_warn() {
-    echo -e "[$(log_timestamp)] ${YELLOW}[WARN]${NC} $1"
+    printf '%b\n' "[$(log_timestamp)] ${YELLOW}[WARN]${NC} $1"
 }
 
 log_step_error() {
-    echo -e "${RED}$1${NC}"
+    printf '%b\n' "${RED}$1${NC}"
 }
 
 log_error() {
-    echo -e "[$(log_timestamp)] ${RED}[ERROR]${NC} $1" >&2
+    printf '%b\n' "[$(log_timestamp)] ${RED}[ERROR]${NC} $1" >&2
 }
 
 log_ok() {
-    echo -e "${CYAN}OK${NC} ${1:-}"
+    printf '%b\n' "${CYAN}OK${NC} ${1:-}"
 }
 
 log_step_success() {
-    echo -e "${CYAN}$1${NC} "
+    printf '%b\n' "${CYAN}$1${NC} "
 }
 
 log_success() {
-    echo -e "[$(log_timestamp)] ${CYAN}[SUCCESS]${NC} $1"
+    printf '%b\n' "[$(log_timestamp)] ${CYAN}[SUCCESS]${NC} $1"
 }
 
 # 步骤标题（紧凑单行）：========== 1/5 准备安装包文件 ==========
 print_title() {
-    echo -e "${CYAN}========== $1 ==========${NC}"
+    printf '%b\n' "${CYAN}========== $1 ==========${NC}"
 }
 
 # 子标题（紧凑单行）：步骤内子动作
 print_subtitle() {
-    echo -e "${BLUE}── $1 ${NC}"
+    printf '%b\n' "${BLUE}── $1 ${NC}"
 }
 
 # =============================================================================

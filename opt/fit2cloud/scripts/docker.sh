@@ -1,6 +1,9 @@
 #!/bin/bash
 # 库文件：被入口脚本 source 引入；错误处理(set -euo pipefail)由入口统一提供，勿在此单独添加
 
+# source 守卫：本文件含 readonly 常量，重复 source 会报错（common.sh 自带守卫，此处防 docker.sh 本体重复定义）
+[[ -n "${_F2C_DOCKER_SOURCED:-}" ]] && return 0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ENV_FILE="$SCRIPT_DIR/../.env"
@@ -10,9 +13,10 @@ DOCKER_CONFIG_FILE="${DOCKER_CONFIG_FOLDER}/daemon.json"
 source "$SCRIPT_DIR/common.sh"
 
 # Docker 离线包下载地址默认值（可被 env 文件中的同名变量覆盖）
-DOCKER_PACKAGE_URL_DEFAULT="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker.zip"
-DOCKER_PACKAGE_URL_ARM64_DEFAULT="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker-arm64.zip"
-DOCKER_PACKAGE_URL_RHEL8_DEFAULT="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker-rhel8.tar.gz"
+readonly DOCKER_PACKAGE_URL_DEFAULT="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker.zip"
+readonly DOCKER_PACKAGE_URL_ARM64_DEFAULT="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker-arm64.zip"
+readonly DOCKER_PACKAGE_URL_RHEL8_DEFAULT="https://f2c-north-rel-1251506367.cos.ap-beijing.myqcloud.com/docker-images/docker-rhel8.tar.gz"
+readonly _F2C_DOCKER_SOURCED=1
 
 detect_compose_cmd() {
     if [[ -n "$COMPOSE_CMD" ]]; then
@@ -99,6 +103,68 @@ verify_image_arch() {
     fi
 }
 
+# 导出单个镜像为独立 tar（_ 前缀 = 模块内部函数，仅被 export_docker_images 调用）：
+#   - 命名取镜像名去掉 registry 与 tag，与旧 installer 一致
+#   - 命中缓存则硬链接复用，未命中走 docker save（.part 原子改名 + 流式 md5）
+#   - stdout: "ok" / "ok:缓存命中" / 错误消息；返回码 0/1
+# 用法: _export_one <镜像名> <输出目录> <缓存目录（空=不启用缓存）>
+_export_one() {
+    local image_name="$1"
+    local images_dir="$2"
+    local cache_dir="$3"
+    local base_name="${image_name##*/}"
+    local tag="${base_name%%:*}"
+    local short_name="${tag%%@*}"
+    local out_file="$images_dir/${short_name}.tar"
+
+    # 缓存文件：key 取镜像 ID md5；sidecar md5 由导出时流式生成，
+    # manifest 阶段直接复用，免二次全量读取
+    local cache_tar="" cache_md5=""
+    if [[ -n "$cache_dir" ]]; then
+        local image_id
+        image_id=$(docker image inspect --format '{{.Id}}' "$image_name" 2>/dev/null)
+        if [[ -z "$image_id" ]]; then
+            echo "镜像不存在于本地，请先执行 pull 步骤: $image_name"
+            return 1
+        fi
+        local cache_key
+        cache_key=$(printf '%s' "${image_id}" | md5sum | awk '{print $1}')
+        cache_tar="$cache_dir/${cache_key}-${short_name}.tar"
+        cache_md5="$cache_tar.md5"
+        # 命中条件要求 tar 与 sidecar md5 同时存在（防止半截缓存被误命中）
+        if [[ -s "$cache_tar" && -s "$cache_md5" ]]; then
+            ln "$cache_tar" "$out_file" 2>/dev/null || cp -f "$cache_tar" "$out_file"
+            cp -f "$cache_md5" "$out_file.md5"
+            echo "ok:缓存命中"
+            return 0
+        fi
+    fi
+
+    # docker save 曾出现守护进程挂死（0 CPU、0 字节增长）无限等待的情况，
+    # 用 timeout 兜底：默认 2 小时，可通过 DOCKER_SAVE_TIMEOUT 调整
+    if [[ -n "$cache_tar" ]]; then
+        # 先写 .part 临时文件，成功后原子改名 —— 进程被杀/断电不会留下半截缓存被误命中
+        local cache_part="${cache_tar}.part"
+        if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save "$image_name" \
+            | tee "$cache_part" | md5sum | awk '{print $1}' > "${cache_part}.md5"; then
+            rm -f "$cache_part" "${cache_part}.md5"
+            echo "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）: ${image_name}"
+            return 1
+        fi
+        mv -f "$cache_part" "$cache_tar"
+        mv -f "${cache_part}.md5" "$cache_md5"
+        ln "$cache_tar" "$out_file" 2>/dev/null || cp -f "$cache_tar" "$out_file"
+        cp -f "$cache_md5" "$out_file.md5"
+    else
+        if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save -o "$out_file" "$image_name"; then
+            rm -f "$out_file"
+            echo "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）: ${image_name}"
+            return 1
+        fi
+    fi
+    echo "ok"
+}
+
 export_docker_images() {
     print_subtitle "导出 Docker 镜像..."
 
@@ -143,66 +209,13 @@ export_docker_images() {
     # 导出单个镜像为独立 tar（命名取镜像名去掉 registry 与 tag，与旧 installer 一致）：
     #   - 安装侧 docker load 逐个加载，单文件损坏只影响该镜像
     #   - 单镜像缓存可精确命中，比整组合并成一个大 tar 更易复用
-    export_one() {
-        local image_name="$1"
-        local base_name="${image_name##*/}"
-        local tag="${base_name%%:*}"
-        local short_name="${tag%%@*}"
-        local out_file="$images_dir/${short_name}.tar"
-
-        # 缓存文件：key 取镜像 ID md5；sidecar md5 由导出时流式生成，
-        # manifest 阶段直接复用，免二次全量读取
-        local cache_tar="" cache_md5=""
-        if [[ -n "$cache_dir" ]]; then
-            local image_id
-            image_id=$(docker image inspect --format '{{.Id}}' "$image_name" 2>/dev/null)
-            if [[ -z "$image_id" ]]; then
-                echo "镜像不存在于本地，请先执行 pull 步骤: $image_name"
-                return 1
-            fi
-            local cache_key
-            cache_key=$(printf '%s' "${image_id}" | md5sum | awk '{print $1}')
-            cache_tar="$cache_dir/${cache_key}-${short_name}.tar"
-            cache_md5="$cache_tar.md5"
-            # 命中条件要求 tar 与 sidecar md5 同时存在（防止半截缓存被误命中）
-            if [[ -s "$cache_tar" && -s "$cache_md5" ]]; then
-                ln "$cache_tar" "$out_file" 2>/dev/null || cp -f "$cache_tar" "$out_file"
-                cp -f "$cache_md5" "$out_file.md5"
-                echo "ok:缓存命中"
-                return 0
-            fi
-        fi
-
-        # docker save 曾出现守护进程挂死（0 CPU、0 字节增长）无限等待的情况，
-        # 用 timeout 兜底：默认 2 小时，可通过 DOCKER_SAVE_TIMEOUT 调整
-        if [[ -n "$cache_tar" ]]; then
-            # 先写 .part 临时文件，成功后原子改名 —— 进程被杀/断电不会留下半截缓存被误命中
-            local cache_part="${cache_tar}.part"
-            if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save "$image_name" \
-                | tee "$cache_part" | md5sum | awk '{print $1}' > "${cache_part}.md5"; then
-                rm -f "$cache_part" "${cache_part}.md5"
-                echo "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）: ${image_name}"
-                return 1
-            fi
-            mv -f "$cache_part" "$cache_tar"
-            mv -f "${cache_part}.md5" "$cache_md5"
-            ln "$cache_tar" "$out_file" 2>/dev/null || cp -f "$cache_tar" "$out_file"
-            cp -f "$cache_md5" "$out_file.md5"
-        else
-            if ! timeout "${DOCKER_SAVE_TIMEOUT:-7200}" docker save -o "$out_file" "$image_name"; then
-                rm -f "$out_file"
-                echo "docker save 失败或超时（可用 DOCKER_SAVE_TIMEOUT 调整超时秒数）: ${image_name}"
-                return 1
-            fi
-        fi
-        echo "ok"
-    }
+    # （实现在 _export_one：提升为文件级函数，避免函数嵌套定义）
 
     # 第一阶段：顺序处理缓存命中（硬链接零拷贝），未命中的进入待导出列表
     local to_export=()
     for image_name in "${image_array[@]}"; do
         local result
-        result=$(export_one "$image_name") || true
+        result=$(_export_one "$image_name" "$images_dir" "$cache_dir") || true
         if [[ "$result" == ok* ]]; then
             if [[ "$result" == "ok:缓存命中" ]]; then
                 log_info "缓存命中: ${image_name}"
@@ -223,7 +236,7 @@ export_docker_images() {
         local image_name
         for image_name in "${to_export[@]}"; do
             (
-                if export_one "$image_name" > "$tmpdir/msg_$idx" 2>&1; then
+                if _export_one "$image_name" "$images_dir" "$cache_dir" > "$tmpdir/msg_$idx" 2>&1; then
                     echo ok > "$tmpdir/result_$idx"
                 else
                     echo fail > "$tmpdir/result_$idx"

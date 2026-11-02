@@ -181,7 +181,7 @@ copy_extensions() {
     local packages=(${extension_packages//,/ })
     for package in "${packages[@]}"; do
         local filename=$(basename "$package")
-        local decode_filename=$(echo -e "$(printf '%b' "${filename//%/\\x}")")
+        local decode_filename=$(printf '%b' "${filename//%/\\x}")
         if [[ "${DRY_RUN:-false}" == "true" ]]; then
             log_info_inline "$decode_filename"
             log_step_success "跳过"

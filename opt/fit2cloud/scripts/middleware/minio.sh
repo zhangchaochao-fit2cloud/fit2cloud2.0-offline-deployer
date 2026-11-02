@@ -42,7 +42,7 @@ install_minio() {
 }
 
 install_minio_interactive() {
-    echo -e "${GREEN}【MinIO】${NC}\n"
+    print_subtitle "【MinIO】"
     local choice=$(read_with_default "是否安装 MinIO 服务器? [y/n]" "y")
     if [[ "$choice" =~ ^[Nn]$ ]]; then
         configure_external_minio_interactive
