@@ -257,18 +257,22 @@ export_docker_images() {
     fi
 
     # 缓存清理：每个镜像名只保留最近 IMAGE_CACHE_KEEP 个版本，防止磁盘无限增长；
-    # 不符合 <md5>-<name>.tar 命名的历史缓存（如早期单 tar 格式）按 mtime 只保留最近 1 份，其余清除
+    # 不符合 <md5>-<name>.tar 命名的历史缓存（如早期单 tar 格式）直接清除——
+    # per-image 命中逻辑永远不会读取它们，属死数据
     if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
-        local keep=${IMAGE_CACHE_KEEP:-2} stale legacy
+        local keep=${IMAGE_CACHE_KEEP:-2} stale="" legacy_list=""
         stale=$(ls -t "$cache_dir"/*.tar 2>/dev/null | awk -F/ -v k="$keep" \
             '{ n=$NF; sub(/^[0-9a-f]+-/, "", n); sub(/\.tar$/, "", n); if (seen[n]++ >= k) print }')
-        legacy=$(ls -t "$cache_dir"/*.tar 2>/dev/null | grep -vE '/[0-9a-f]{32}-.+\.tar$' | tail -n +2)
-        if [[ -n "$stale" || -n "$legacy" ]]; then
-            # shellcheck disable=SC2086
-            echo "$stale $legacy" | tr ' ' '\n' | sed '/^$/d' | xargs -r rm -f
-            # shellcheck disable=SC2086
-            echo "$stale $legacy" | tr ' ' '\n' | sed '/^$/d; s/$/.md5/' | xargs -r rm -f
-            log_info "镜像导出缓存清理完成（每镜像保留最近 ${keep} 份，历史格式仅保留最近 1 份）"
+        local f
+        for f in "$cache_dir"/*.tar; do
+            [[ -e "$f" ]] || continue
+            [[ "$(basename "$f")" =~ ^[0-9a-f]{32}- ]] && continue
+            legacy_list+="$f"$'\n'
+        done
+        if [[ -n "$stale" || -n "$legacy_list" ]]; then
+            printf '%s\n%s' "$stale" "$legacy_list" | sed '/^$/d' | xargs -r rm -f
+            printf '%s\n%s' "$stale" "$legacy_list" | sed '/^$/d; s/$/.md5/' | xargs -r rm -f
+            log_info "镜像导出缓存清理完成（每镜像保留最近 ${keep} 份，历史格式已清除）"
         fi
     fi
 

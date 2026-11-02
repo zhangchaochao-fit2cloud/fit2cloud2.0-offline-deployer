@@ -81,6 +81,7 @@ parse_args() {
             --env-file)      ENV_FILE="$2"; shift 2 ;;
             --skip-render-cfg) SKIP_RENDER_CFG=true; shift ;;
             --compress)      PACKAGE_COMPRESS="$2"; shift 2 ;;
+            # shellcheck disable=SC2034  # 跨文件：create-package.sh 消费
             --package-url-prefix) PACKAGE_URL_PREFIX="$2"; shift 2 ;;
             *)               log_error "未知参数: $1"; show_help; exit 1 ;;
         esac

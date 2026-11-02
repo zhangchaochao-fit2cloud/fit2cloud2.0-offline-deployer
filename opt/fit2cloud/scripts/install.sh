@@ -174,7 +174,10 @@ load_env() {
             log_warn "无法自动检测本机 IP，请手动在 $INSTALL_ENV 中配置 CE_ACCESS_IP"
         fi
     fi
+    # 以下两个全局变量被 render.sh / service.sh（source 引入）消费，shellcheck 单文件视角报未使用
+    # shellcheck disable=SC2034
     IMAGE_ADDRESS=$(get_env_value IMAGE_ADDRESS "registry.fit2cloud.com/north" "$INSTALL_ENV")
+    # shellcheck disable=SC2034
     PLATFORM=$(get_env_value PLATFORM "amd64" "$INSTALL_ENV")
 
     INSTALL_DIR="${INSTALL_DIR:-${CE_INSTALL_PATH}/fit2cloud}"
