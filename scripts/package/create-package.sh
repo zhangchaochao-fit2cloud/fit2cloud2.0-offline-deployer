@@ -20,12 +20,21 @@ create_package() {
     local today=$(date "+%Y.%m.%d")
     local build_version=$(echo "$build_id" | awk '{print $1}')
 
+    # 压缩方式：gzip 生成 .tar.gz；none 不压缩生成 .tar（安装包体积略增，打包提速约 10 分钟）
+    local compress="${PACKAGE_COMPRESS:-gzip}"
+    local tar_opts=(-cf)
+    local tar_ext=".tar"
+    if [[ "$compress" == "gzip" ]]; then
+        tar_opts=(-zcf)
+        tar_ext=".tar.gz"
+    fi
+
     local package_filename="cloudexplorer-${build_version}-${platform}-${today}"
-    local full_package_filename="${package_filename}.tar.gz"
+    local full_package_filename="${package_filename}${tar_ext}"
     local md5_package_filename="${package_filename}.md5"
 
     local plugin_package_filename="cloudexplorer-cloudplugins-${build_version}-${platform}-${today}"
-    local full_plugin_package_filename="${plugin_package_filename}.tar.gz"
+    local full_plugin_package_filename="${plugin_package_filename}${tar_ext}"
     local md5_plugin_package_filename="${plugin_package_filename}.md5"
 
     # 生成包清单 manifest.txt：安装/升级时用于包完整性校验
@@ -52,14 +61,21 @@ create_package() {
     cd "$output_dir"
 
     if [[ -d "$installer_dir" ]]; then
-        tar -zcf "$full_package_filename" installer
+        tar "${tar_opts[@]}" "$full_package_filename" installer
         md5sum "$full_package_filename" | awk '{print "md5: "$1}' > "$md5_package_filename"
         log_success "安装包: $full_package_filename"
+        # 记录下载地址前缀 → package-source.url（含完整 URL），
+        # 安装侧 md5 校验失败时据此自动重新下载，无需人工介入
+        if [[ -n "${PACKAGE_URL_PREFIX:-}" ]]; then
+            echo "${PACKAGE_URL_PREFIX%/}/${full_package_filename}" \
+                > "${installer_dir}/fit2cloud/package-source.url"
+            log_info "安装包下载地址已写入: fit2cloud/package-source.url"
+        fi
     fi
 
     local cloud_plugins_dir="$output_dir/cloud_plugins"
     if [[ -d "$cloud_plugins_dir" && "$(ls -A "$cloud_plugins_dir" 2>/dev/null)" ]]; then
-        tar -zcf "$full_plugin_package_filename" cloud_plugins
+        tar "${tar_opts[@]}" "$full_plugin_package_filename" cloud_plugins
         md5sum "$full_plugin_package_filename" | awk '{print "md5: "$1}' > "$md5_plugin_package_filename"
         log_success "插件包: $full_plugin_package_filename"
     fi

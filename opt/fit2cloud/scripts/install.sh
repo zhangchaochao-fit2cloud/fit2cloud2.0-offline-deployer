@@ -404,6 +404,55 @@ copy_files() {
     log_success "安装文件复制完成"
 }
 
+# md5 校验失败时自动重新下载安装包并重新解压（无感知修复）
+# 依赖打包时写入的 fit2cloud/package-source.url；不存在则无法自修复，回退为人工下载
+repair_package_from_source() {
+    local url_file="$FIT2CLOUD_DIR/package-source.url"
+    if [[ ! -s "$url_file" ]]; then
+        log_warn "未找到 $url_file，无法自动重新下载（请手动重新下载安装包）"
+        return 1
+    fi
+    local url
+    url=$(head -1 "$url_file")
+    log_warn "镜像 md5 校验失败，自动重新下载安装包..."
+    log_info "下载地址: $url"
+
+    local tmp_tar tmp_md5
+    tmp_tar=$(mktemp /tmp/fit2cloud-package.XXXXXX)
+    tmp_md5="${tmp_tar}.md5"
+    if ! download_file "$url" "$tmp_tar"; then
+        rm -f "$tmp_tar" "$tmp_md5"
+        log_error "重新下载失败"
+        return 1
+    fi
+
+    # 下载侧的整包 md5（内容格式 "md5: <hash>"），存在则先验证再解压，避免二次损坏
+    local expected="" actual
+    if download_file "${url}.md5" "$tmp_md5" 2>/dev/null; then
+        expected=$(sed -n 's/^md5:[[:space:]]*//p' "$tmp_md5" | head -1)
+    fi
+    if [[ -n "$expected" ]]; then
+        actual=$(md5sum "$tmp_tar" | awk '{print $1}')
+        if [[ "$actual" != "$expected" ]]; then
+            rm -f "$tmp_tar" "$tmp_md5"
+            log_error "重新下载后 md5 仍不一致（可能源文件损坏）"
+            return 1
+        fi
+    fi
+
+    # 重新解压覆盖回原解压目录（installer/ 上级），fit2cloud 目录布局不变
+    local package_root
+    package_root="$(dirname "$(dirname "$FIT2CLOUD_DIR")")"
+    if ! tar -xf "$tmp_tar" -C "$package_root"; then
+        rm -f "$tmp_tar" "$tmp_md5"
+        log_error "重新解压失败"
+        return 1
+    fi
+    rm -f "$tmp_tar" "$tmp_md5"
+    log_success "安装包已重新下载并解压完成"
+    return 0
+}
+
 verify_package() {
     local manifest="$INSTALL_DIR/manifest.txt"
     if [[ ! -f "$manifest" ]]; then
@@ -432,7 +481,17 @@ verify_package() {
             log_success "镜像 md5 全量校验通过"
         else
             rm -f "$tmp_check"
-            log_error "镜像 md5 校验失败，安装包已损坏，请重新下载"
+            # 自动修复：重新下载安装包并重解压，然后复检一次
+            if repair_package_from_source; then
+                echo "$image_md5s" > "$tmp_check"
+                if (cd "$INSTALL_DIR/docker-images" && md5sum -c --quiet "$tmp_check"); then
+                    rm -f "$tmp_check"
+                    log_success "镜像 md5 全量校验通过（已自动重新下载修复）"
+                    return 0
+                fi
+            fi
+            rm -f "$tmp_check"
+            log_error "镜像 md5 校验失败，自动修复未成功，请手动重新下载安装包"
             return 1
         fi
     else

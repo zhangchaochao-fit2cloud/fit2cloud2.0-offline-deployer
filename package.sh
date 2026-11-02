@@ -23,6 +23,8 @@ PLUGIN_PACKAGES=""
 DEPLOYMENT_PACKAGES=""
 EXTENSION_PACKAGES=""
 ENV_FILE=""
+PACKAGE_COMPRESS="gzip"
+PACKAGE_URL_PREFIX=""
 # CLI 显式传入的参数标记（--env-file 只填充未显式指定的项）
 OPT_VERSION="" OPT_BUILD_NUMBER="" OPT_REGISTRY="" OPT_OUTPUT_DIR=""
 OPT_PLATFORM="" OPT_PLUGIN_PACKAGES="" OPT_DEPLOYMENT_PACKAGES="" OPT_EXTENSION_PACKAGES=""
@@ -48,6 +50,9 @@ Fit2Cloud 2.0 打包脚本
     -e, --extension-packages 扩展包 URL（多个用逗号分隔）
     --env-file FILE         打包环境文件（如 packaging.env，仅填充未在命令行指定的项）
     --skip-render-cfg       跳过 ce-render-cfg 编译
+    --compress gzip|none    安装包压缩方式 [默认: gzip；none 不压缩，速度快、体积略增]
+    --package-url-prefix URL 安装包下载地址前缀；写入 package-source.url，
+                            安装侧 md5 校验失败时据此自动重新下载
 
 示例:
     $0 -v 2.0.1 -b 100
@@ -75,6 +80,8 @@ parse_args() {
             -e|--extension-packages) EXTENSION_PACKAGES="$2"; OPT_EXTENSION_PACKAGES=1; shift 2 ;;
             --env-file)      ENV_FILE="$2"; shift 2 ;;
             --skip-render-cfg) SKIP_RENDER_CFG=true; shift ;;
+            --compress)      PACKAGE_COMPRESS="$2"; shift 2 ;;
+            --package-url-prefix) PACKAGE_URL_PREFIX="$2"; shift 2 ;;
             *)               log_error "未知参数: $1"; show_help; exit 1 ;;
         esac
     done
@@ -199,6 +206,12 @@ EOF
 main() {
     parse_args "$@"
     load_env_file
+
+    # 压缩方式合法性校验
+    case "${PACKAGE_COMPRESS}" in
+        gzip|none) : ;;
+        *) log_error "--compress 仅支持 gzip | none，当前: ${PACKAGE_COMPRESS}"; exit 1 ;;
+    esac
 
     # 镜像 tag 默认跟随版本号.构建号，避免忘传参数时误用 master 等开发标签
     VERSION="${VERSION:-${FIT2CLOUD_VERSION}.${BUILD_NUMBER}}"
