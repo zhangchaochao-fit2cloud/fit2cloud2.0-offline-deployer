@@ -220,6 +220,10 @@ main() {
 
     print_title "开始打包 Fit2Cloud 2.0..."
 
+    # 清理上次构建残留在 dist 根的产物（tar/md5/report），
+    # 避免产物归位/上传阶段按 glob 取到旧包（曾导致旧包被重复上传）
+    rm -f "$OUTPUT_DIR"/cloudexplorer-* "$OUTPUT_DIR"/package-report.json
+
     check_prerequisites
 
     INSTALLER_DIR="$OUTPUT_DIR/installer"
