@@ -242,16 +242,38 @@ main() {
     source "$PACKAGE_DIR/prepare.sh"
     prepare "$OUTPUT_DIR" "$INSTALLER_DIR" "$BASE_DIR"
 
+    # 中间件镜像的平台 tag：部分镜像在 registry 中 arm64 用独立 tag（如 influxdb:1.8.0-arm、
+    # minio:latest-arm64）。默认值可被 --env-file 注入的 <NAME>_DOCKER_IMAGE 覆盖。
+    middleware_image() {
+        local image="$1"
+        local tag
+        case "$image" in
+            influxdb)    tag="1.8.0" ;;
+            minio)       tag="$VERSION" ;;
+            websockify)  tag="latest" ;;
+            *)           tag="$VERSION" ;;
+        esac
+        if [[ "$PLATFORM" == "arm64" ]]; then
+            case "$image" in
+                influxdb)    tag="1.8.0-arm" ;;
+                minio)       tag="latest-arm64" ;;
+                # registry 中暂无 arm64 版本：保持默认并在拉取时给出明确失败原因，
+                # 可通过 packaging.env 注入 <NAME>_DOCKER_IMAGE 指定可用的 arm64 镜像
+            esac
+        fi
+        echo "$REGISTRY_URL/$image:$tag"
+    }
+
     # 安装包 .env 一次写全（打包期基础信息；安装期/运行期变量由 install.env/runtime.env 提供）
-    # MINIO_DOCKER_IMAGE / WEBSOCKIFY_DOCKER_IMAGE 允许 --env-file 注入覆盖：
-    # 默认 minio 跟随镜像 tag（与业务镜像一致），websockify 仓库仅有 latest
     {
         echo "# 由 package.sh 自动生成"
         echo "IMAGE_ADDRESS=${REGISTRY_URL}"
         echo "VERSION=${VERSION}"
         echo "PLATFORM=${PLATFORM}"
-        echo "MINIO_DOCKER_IMAGE=${MINIO_DOCKER_IMAGE:-$REGISTRY_URL/minio:$VERSION}"
-        echo "WEBSOCKIFY_DOCKER_IMAGE=${WEBSOCKIFY_DOCKER_IMAGE:-$REGISTRY_URL/websockify:latest}"
+        echo "MINIO_DOCKER_IMAGE=${MINIO_DOCKER_IMAGE:-$(middleware_image minio)}"
+        echo "WEBSOCKIFY_DOCKER_IMAGE=${WEBSOCKIFY_DOCKER_IMAGE:-$(middleware_image websockify)}"
+        echo "INFLUXDB_DOCKER_IMAGE=${INFLUXDB_DOCKER_IMAGE:-$(middleware_image influxdb)}"
+        echo "ANSIBLE_API_DOCKER_IMAGE=${ANSIBLE_API_DOCKER_IMAGE:-$(middleware_image ansible-api)}"
     } > "$INSTALLER_ENV"
 
     if [[ "$SKIP_RENDER_CFG" != "true" ]]; then

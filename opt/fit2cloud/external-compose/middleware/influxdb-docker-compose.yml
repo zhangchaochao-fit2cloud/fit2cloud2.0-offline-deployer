@@ -1,6 +1,6 @@
 services:
   influxdb:
-    image: ${IMAGE_ADDRESS}/influxdb:1.8.0
+    image: ${INFLUXDB_DOCKER_IMAGE}
     container_name: "influxdb"
     environment:
       - INFLUXDB_REPORTING_DISABLED=true

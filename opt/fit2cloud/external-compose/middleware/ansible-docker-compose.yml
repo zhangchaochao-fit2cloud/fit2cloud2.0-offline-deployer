@@ -1,6 +1,6 @@
 services:
   ansible:
-    image: ${IMAGE_ADDRESS}/ansible-api:${VERSION}
+    image: ${ANSIBLE_API_DOCKER_IMAGE}
     container_name: ansible
     restart: always
     healthcheck:
