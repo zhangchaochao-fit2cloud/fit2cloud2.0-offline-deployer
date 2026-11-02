@@ -30,6 +30,7 @@ PROGRESS_FILE=""
 VERIFY_IMAGES=false
 # 命令行开关默认值（set -u 下必须初始化）
 SILENT_MODE=false
+CURRENT_STEP_DESC=""   # 当前执行的安装步骤（失败时提示定位用）
 INSTALL_DIR=""
 WITH_NGINX=false
 FORCE_REINSTALL=false
@@ -58,6 +59,8 @@ run_step() {
     if step_done "$step"; then
         log_info "$desc: 已完成（跳过）"
     else
+        CURRENT_STEP_DESC="$desc"
+        log_info "==> $desc"
         "$@"
         mark_step_done "$step"
     fi
@@ -72,7 +75,9 @@ rollback() {
             prepare_dir)    rm -rf "$INSTALL_DIR" 2>/dev/null || true ;;
         esac
     done
-    log_error "回滚完成，请检查错误后重试"
+    log_error "回滚完成。失败步骤: ${CURRENT_STEP_DESC:-未知}"
+    log_error "完整日志: ${LOG_FILE:-（未启用）}"
+    log_info "重新执行 bash install.sh 将自动跳过已完成的步骤，从失败处继续安装"
 }
 
 trap rollback ERR
@@ -636,7 +641,7 @@ show_completion_info() {
     if [[ -z "$ip_addr" ]]; then
         ip_addr=$(get_local_ip)
     fi
-
+    local protocol=$(get_env_value CE_ACCESS_PROTOCOL "http" "$INSTALL_DIR/.env")
     local admin_user=$(get_env_value CE_ADMIN_USERNAME "admin" "$INSTALL_DIR/.env")
 
     cat << EOF
@@ -644,17 +649,25 @@ show_completion_info() {
 ============================================================================
   Fit2Cloud 2.0 安装完成！
 ============================================================================
-  访问地址:  http://${ip_addr}:$CE_ACCESS_PORT
-  (服务启动约需 5 分钟，请耐心等待)
+  访问地址:  ${protocol}://${ip_addr}:$CE_ACCESS_PORT
+
+  服务启动约需 5 分钟，期间可用以下命令查看进度:
+      f2cctl status
+      f2cctl logs --tail=50
+  如访问不通，请检查防火墙/安全组是否已放行端口 $CE_ACCESS_PORT
 
   管理员账号:  $admin_user
   管理员密码:  ******（请查看 $INSTALL_DIR/.env 中 CE_ADMIN_PASSWORD）
 
+  常用运维命令（已部署到 /usr/bin/f2cctl）:
+      f2cctl start|stop|restart [服务名]
+      f2cctl backup              # 备份
+
   安装目录:  $INSTALL_DIR
   配置文件:  $INSTALL_DIR/.env
   日志目录:  $INSTALL_DIR/logs
+  安装日志:  ${LOG_FILE:-(未启用)}
 
-  管理命令:  $INSTALL_DIR/bin/fit2cloud/standalone/f2cctl
 ============================================================================
 
 EOF
@@ -945,8 +958,12 @@ main() {
     parse_args "$@"
     load_env
 
+    # 安装全量日志留档（失败排查用；完成/失败提示中都会引用）
+    LOG_FILE="/tmp/fit2cloud-install-$(date +%Y%m%d-%H%M%S).log"
+
     # 欢迎面板：展示包信息/环境快照/将使用的默认配置（两种模式共用）
     show_welcome
+    log_info "安装日志: $LOG_FILE"
 
     # 交互模式：向导逐项确认；静默模式：提示默认值与自定义方式后直接安装
     if [[ "$SILENT_MODE" != "true" ]]; then

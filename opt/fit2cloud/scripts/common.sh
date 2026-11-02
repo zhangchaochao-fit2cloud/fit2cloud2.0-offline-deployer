@@ -38,42 +38,51 @@ log_timestamp() {
 }
 
 # 日志格式统一为：[HH:MM:SS] [级别] 消息（时间戳在级别前）
+# LOG_FILE 非空时同步追加到该文件（安装留档），interactive 的 read 提示走 stderr 不受影响
+LOG_FILE="${LOG_FILE:-}"
+
+_log_emit() {
+    printf '%b\n' "$1"
+    [[ -n "$LOG_FILE" ]] && printf '%b\n' "$1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
 log_info_inline() {
     local msg="$1"
     get_padding "$msg"
     printf '%b' "[$(log_timestamp)] ${GREEN}[INFO]${NC} $msg $padding"
+    [[ -n "$LOG_FILE" ]] && printf '%b' "[$(log_timestamp)] [INFO] $msg $padding" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 log_info() {
-    printf '%b\n' "[$(log_timestamp)] ${GREEN}[INFO]${NC} $1"
+    _log_emit "[$(log_timestamp)] [INFO] $1"
 }
 
 log_step_warn() {
-    printf '%b\n' "${YELLOW}$1${NC}"
+    _log_emit "${YELLOW}$1${NC}"
 }
 
 log_warn() {
-    printf '%b\n' "[$(log_timestamp)] ${YELLOW}[WARN]${NC} $1"
+    _log_emit "[$(log_timestamp)] [WARN] $1"
 }
 
 log_step_error() {
-    printf '%b\n' "${RED}$1${NC}"
+    _log_emit "${RED}$1${NC}"
 }
 
 log_error() {
-    printf '%b\n' "[$(log_timestamp)] ${RED}[ERROR]${NC} $1" >&2
+    _log_emit "[$(log_timestamp)] [ERROR] $1" >&2
 }
 
 log_ok() {
-    printf '%b\n' "${CYAN}OK${NC} ${1:-}"
+    _log_emit "${CYAN}OK${NC} ${1:-}"
 }
 
 log_step_success() {
-    printf '%b\n' "${CYAN}$1${NC} "
+    _log_emit "${CYAN}$1${NC} "
 }
 
 log_success() {
-    printf '%b\n' "[$(log_timestamp)] ${CYAN}[SUCCESS]${NC} $1"
+    _log_emit "[$(log_timestamp)] [SUCCESS] $1"
 }
 
 # 步骤标题（紧凑单行）：========== 1/5 准备安装包文件 ==========
