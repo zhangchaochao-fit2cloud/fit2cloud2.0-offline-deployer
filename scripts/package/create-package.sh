@@ -128,10 +128,18 @@ copy_middleware() {
             # 统一走 download_file（curl 优先，wget 兜底），避免直接用 wget 的新选项在旧系统上不兼容
             download_file "$package" "$middleware_dir/pkg.zip"
         fi
-        # unzip 老版本可能不支持 -O（字符集）参数，失败时降级为普通解压
-        if ! unzip -O utf8 -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null 2>&1; then
-            log_warn "unzip -O utf8 解压失败，降级为普通解压"
-            unzip -o -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null
+        # unzip 退出码 1 表示"有告警但解压成功"（如剥离 zip 内绝对路径），不能当失败；
+        # 部分老版本 unzip 不支持 -O（字符集）参数，此时降级为普通解压
+        local unzip_rc=0
+        unzip -O utf8 -o -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null 2>&1 || unzip_rc=$?
+        if [[ $unzip_rc -gt 1 ]]; then
+            log_warn "unzip -O utf8 解压失败（退出码 ${unzip_rc}），降级为普通解压"
+            unzip_rc=0
+            unzip -o -d "$middleware_dir/middleware_init" "$middleware_dir/pkg.zip" >/dev/null 2>&1 || unzip_rc=$?
+        fi
+        if [[ $unzip_rc -gt 1 ]]; then
+            log_error "中间件包解压失败（退出码 ${unzip_rc}）: ${package}"
+            return 1
         fi
         rm -f "$middleware_dir/pkg.zip"
         rm -rf "$middleware_dir/middleware_init/__MACOSX"
