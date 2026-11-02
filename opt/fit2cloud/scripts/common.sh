@@ -255,10 +255,19 @@ download_file() {
     local url="$1"
     local output="$2"
 
+    # 终端下显示进度，CI/无终端环境静默（-sS 只报错误），避免进度条刷屏构建日志
     if cmd_exists curl; then
-        curl -L --progress-bar -f -o "$output" "$url"
+        if [[ -t 1 ]]; then
+            curl -L --progress-bar -f -o "$output" "$url"
+        else
+            curl -L -sS -f -o "$output" "$url"
+        fi
     elif cmd_exists wget; then
-        wget -q --show-progress -O "$output" "$url"
+        if [[ -t 1 ]]; then
+            wget --show-progress -O "$output" "$url"
+        else
+            wget -q -O "$output" "$url"
+        fi
     else
         log_error "wget 和 curl 都未安装"
         return 1

@@ -39,7 +39,7 @@ Fit2Cloud 2.0 打包脚本
     -h, --help              显示此帮助信息
     -v, --version VERSION   版本号 [默认: 2.0]
     -b, --build-number NUM  构建号 [默认: 1]
-    -V, --image-version TAG 镜像 tag [默认: <版本号>.<构建号>，勿用 master 等开发标签]
+    -V, --image-version TAG 镜像 tag，用分支 tag（如 dev-preview/release）[默认: <版本号>.<构建号>]
     -r, --registry URL      镜像仓库地址 [默认: registry.fit2cloud.com/north]
     -o, --output-dir DIR    输出目录 [默认: ./dist]
     --platform PLATFORM     目标平台 [默认: amd64]
@@ -178,6 +178,7 @@ build_render_cfg() {
 
 show_package_info() {
     local package_file="$1"
+    local plugin_file="$2"
 
     print_title "Fit2Cloud ${FIT2CLOUD_VERSION} 打包完成！"
 
@@ -190,8 +191,10 @@ show_package_info() {
 构建号:    $BUILD_NUMBER
 平台:      $PLATFORM
 镜像仓库:  $REGISTRY_URL
+镜像 tag:  $VERSION
 输出目录:  $OUTPUT_DIR
 安装包:    $package_file
+插件包:    $plugin_file
 
 =============================================================================
 
@@ -225,14 +228,17 @@ main() {
     source "$PACKAGE_DIR/prepare.sh"
     prepare "$OUTPUT_DIR" "$INSTALLER_DIR" "$BASE_DIR"
 
-    set_env_value IMAGE_ADDRESS "$REGISTRY_URL" "$INSTALLER_ENV"
-    set_env_value PLATFORM "$PLATFORM" "$INSTALLER_ENV"
-    # VERSION 写入镜像 tag（默认 <版本号>.<构建号>），prepare 阶段的占位值以这里为准
-    set_env_value VERSION "$VERSION" "$INSTALLER_ENV"
-    # 中间件镜像：允许 --env-file 注入 MINIO_DOCKER_IMAGE / WEBSOCKIFY_DOCKER_IMAGE 覆盖
-    # 默认 minio 跟随分支 tag（与业务镜像一致），websockify 仓库仅有 latest
-    set_env_value MINIO_DOCKER_IMAGE "${MINIO_DOCKER_IMAGE:-$REGISTRY_URL/minio:$VERSION}" "$INSTALLER_ENV"
-    set_env_value WEBSOCKIFY_DOCKER_IMAGE "${WEBSOCKIFY_DOCKER_IMAGE:-$REGISTRY_URL/websockify:latest}" "$INSTALLER_ENV"
+    # 安装包 .env 一次写全（打包期基础信息；安装期/运行期变量由 install.env/runtime.env 提供）
+    # MINIO_DOCKER_IMAGE / WEBSOCKIFY_DOCKER_IMAGE 允许 --env-file 注入覆盖：
+    # 默认 minio 跟随镜像 tag（与业务镜像一致），websockify 仓库仅有 latest
+    {
+        echo "# 由 package.sh 自动生成"
+        echo "IMAGE_ADDRESS=${REGISTRY_URL}"
+        echo "VERSION=${VERSION}"
+        echo "PLATFORM=${PLATFORM}"
+        echo "MINIO_DOCKER_IMAGE=${MINIO_DOCKER_IMAGE:-$REGISTRY_URL/minio:$VERSION}"
+        echo "WEBSOCKIFY_DOCKER_IMAGE=${WEBSOCKIFY_DOCKER_IMAGE:-$REGISTRY_URL/websockify:latest}"
+    } > "$INSTALLER_ENV"
 
     if [[ "$SKIP_RENDER_CFG" != "true" ]]; then
         build_render_cfg "$INSTALLER_DIR"
@@ -267,8 +273,12 @@ main() {
         rm -rf "$INSTALLER_DIR" "$CLOUD_PLUGINS_DIR"
     fi
 
-    local package_filename="cloudexplorer-${FIT2CLOUD_VERSION}.${BUILD_NUMBER}-${VERSION}-$(date '+%Y.%m.%d').tar.gz"
-    show_package_info "$package_filename"
+    # 真实产物名以 package-report.json 为准（create_package 内部命名，勿在此重复拼接）
+    local report="$OUTPUT_DIR/package-report.json"
+    local package_filename plugin_filename
+    package_filename=$(sed -n 's/.*"package"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$report" | head -1)
+    plugin_filename=$(sed -n 's/.*"plugin_package"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$report" | head -1)
+    show_package_info "${package_filename:-未知}" "${plugin_filename:-未知}"
 }
 
 main "$@"

@@ -1,0 +1,22 @@
+# 扩展模块清单（Jenkins deployer job 与打包共用）
+# 格式: module_name|workspace_suffix|file_prefix|version_suffix
+# 注意: Jenkins job 的 EXTENSIONS 复选框（Groovy 选项列表）需与此清单保持一致
+loadbalancer|loadbalancer-dev-preview-package|loadbalancer-service|2.1.0
+oss|oss-service-dev-preview-package|oss-service|2.0.0
+paas|paas-dev-preview-package|paas-service|2.0.0
+devops|devops-dev-preview|devops|V2.0.0
+container|container-service-dev-preview|container-service|2.0.0
+ticket|ticket-center-dev-preview|ticket-center|2.0.0
+metric|metric-sync-preview|metric-sync|2.0.0
+jumpserver|fit2cloud2.0-jumpserver-v3-dev-preview|jumpserver-connector-v3|2.0.0
+process-cmdb|process-cmdb-dev-preview|process-cmdb-integration|2.0.0
+cmdb-integration|cmdb-integration-dev-preview|cmdb-integration|2.0.0
+cmdb-service|cmdb-service-master|cmdb-service|1.0.0-SNAPSHOT
+file|file-service-dev-preview|file-service|2.0.0
+dataease|dataease-embedded-preview|dataease-embedded|2.0.0
+commvault|commvault-backup-dev-preview|commvault-backup|2.0.0
+physical|physical-machine-dev-preview|physical-machine|2.0.0
+nsx-t|fit2cloud2.0-nsx-t-dev-preview|nsx-t-service|2.0.0
+fusionaccess|FusionAccess-VDI-dev-preview|fusionaccess-service|2.0.0
+veeam|veeam-dev-preview|veeam-backup|2.0.0
+automation|automation-platform-integration-dev-preview|automation-platform-integration|2.0.0

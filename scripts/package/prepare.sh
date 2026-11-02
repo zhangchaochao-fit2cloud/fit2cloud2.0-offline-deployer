@@ -22,15 +22,7 @@ prepare() {
 
     cp -rp "$base_dir/opt"/* "$installer_dir/"
 
-    local installer_env="$installer_dir/fit2cloud/.env"
-    cat > "$installer_env" << EOF
-# 由打包脚本自动生成，仅包含镜像和版本基本信息
-# 安装配置请分别参考 install.env.example（安装期）与 runtime.env.example（运行期）
-IMAGE_ADDRESS=${REGISTRY_URL:-registry.fit2cloud.com/north}
-VERSION=${FIT2CLOUD_VERSION:-dev-preview}
-PLATFORM=${PLATFORM:-amd64}
-EOF
-    log_info ".env 已生成（仅含 IMAGE_ADDRESS/VERSION/PLATFORM）"
+    # .env 由 package.sh 主流程在 prepare 之后一次性写全（此处不写，避免双写不一致）
 
     local aws_price_zip="$installer_dir/fit2cloud/conf/aws_price.json.zip"
     if [[ -f "$aws_price_zip" ]]; then
