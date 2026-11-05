@@ -73,10 +73,12 @@ configure_telegraf() {
     local telegraf_conf="$installer_path/fit2cloud/conf/telegraf/telegraf.conf"
 
     if [[ -f "$telegraf_conf" ]]; then
+        local esc_interval
+        esc_interval=$(escape_sed_replacement "$interval")
         if grep -q "^interval" "$telegraf_conf" 2>/dev/null; then
-            sed -i "s/^interval.*/interval = \"$interval\"/" "$telegraf_conf"
+            replace_in_file "$telegraf_conf" "s|^interval.*|interval = \"${esc_interval}\"|"
         else
-            sed -i "s/# interval = \"10s\"/interval = \"$interval\"/" "$telegraf_conf"
+            replace_in_file "$telegraf_conf" "s|# interval = \"10s\"|interval = \"${esc_interval}\"|"
         fi
         log_info "Telegraf 采集间隔: $interval"
     fi

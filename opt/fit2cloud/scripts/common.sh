@@ -247,6 +247,37 @@ cmd_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# 报错并退出（入口脚本用；被 source 的库内部不要调用，把失败交给入口判断）
+die() {
+    log_error "$1"
+    exit 1
+}
+
+# 就地替换文件内容：不依赖 GNU sed -i（BSD/macOS 的 -i 需要后缀参数，行为不一致）
+# 用法: replace_in_file <文件> <sed 脚本>
+replace_in_file() {
+    local file="$1"
+    local expr="$2"
+    local tmp
+    tmp=$(mktemp "${file}.XXXXXX") || return 1
+    if sed "$expr" "$file" > "$tmp"; then
+        mv "$tmp" "$file"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+# 转义 sed 替换串中的特殊字符（& = 整段匹配，\ 与分隔符需转义）
+# 用法: esc=$(escape_sed_replacement "$value")
+escape_sed_replacement() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//&/\\&}"
+    value="${value//|/\\|}"
+    printf '%s' "$value"
+}
+
 get_local_ip() {
     ip route get 1 2>/dev/null | sed -n 's/^.*src \([0-9.]*\) .*$/\1/p'
 }

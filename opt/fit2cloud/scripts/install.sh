@@ -348,11 +348,14 @@ prepare_install_dir() {
 copy_files() {
     print_title "复制安装文件"
 
-    for sub in conf external-compose docker-images tools data bin; do
+    # scripts 必须一并复制：装机后的 f2cctl / init.d 脚本 / 扩展模块脚本都按
+    # <安装目录>/scripts/*.sh 加载库，缺失会导致 f2cctl 启动即报文件不存在
+    for sub in conf external-compose docker-images tools data bin scripts; do
         if [[ -d "$FIT2CLOUD_DIR/$sub" ]]; then
             cp -r "$FIT2CLOUD_DIR/$sub" "$INSTALL_DIR/"
         fi
     done
+    chmod -R a+x "$INSTALL_DIR/bin" "$INSTALL_DIR/scripts" 2>/dev/null || true
 
     # 包清单（存在才复制，供 verify_package 校验）
     if [[ -f "$FIT2CLOUD_DIR/manifest.txt" ]]; then
@@ -608,8 +611,8 @@ wait_for_healthy() {
     local compose_cmd
     compose_cmd=$(_get_compose_cmd "$INSTALL_DIR" "$INSTALL_DIR/.env" 2>/dev/null) || compose_cmd=""
     if [[ -n "$compose_cmd" ]]; then
-        local profile_args="$(_get_profile_args "$INSTALL_DIR/.env")"
-        expected=$($compose_cmd $profile_args config --services 2>/dev/null | wc -l | tr -d ' ')
+        # _get_compose_cmd 已包含 --env-file / --profile / -f 全局参数
+        expected=$($compose_cmd config --services 2>/dev/null | wc -l | tr -d ' ')
     fi
 
     while [[ $elapsed -lt $max_wait ]]; do
@@ -711,10 +714,10 @@ deploy_cli_tools() {
         return 0
     fi
     chmod +x "$f2cctl_src" 2>/dev/null || true
-    cat > /usr/bin/f2cctl <<EOF
+    cat > /usr/bin/f2cctl << EOF
 #!/bin/bash
 # Fit2Cloud 2.0 管理命令（install.sh 生成）
-exec $f2cctl_src "\$@"
+exec "$f2cctl_src" "\$@"
 EOF
     chmod +x /usr/bin/f2cctl
     log_info "已部署管理命令: /usr/bin/f2cctl → $f2cctl_src"
@@ -734,7 +737,7 @@ install_systemd() {
     local unit_file="/etc/systemd/system/fit2cloud.service"
 
     cp -f "$unit_src" "$unit_file"
-    sed -i -E "s|/opt/fit2cloud|${install_path}/fit2cloud|g" "$unit_file"
+    replace_in_file "$unit_file" "s|/opt/fit2cloud|$(escape_sed_replacement "$install_path")/fit2cloud|g"
 
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl enable fit2cloud.service >/dev/null 2>&1 || true

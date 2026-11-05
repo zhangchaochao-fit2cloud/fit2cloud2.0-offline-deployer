@@ -1,12 +1,17 @@
 #!/bin/bash
 # 库文件：被入口脚本 source 引入；错误处理(set -euo pipefail)由入口统一提供，勿在此单独添加
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -n "${_F2C_RENDER_SOURCED:-}" ]] && return 0
 
-source "$SCRIPT_DIR/common.sh"
+_F2C_RENDER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "$_F2C_RENDER_DIR/common.sh"
+
+readonly _F2C_RENDER_SOURCED=1
 
 get_render_bin() {
-    local base_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
+    local base_dir
+    base_dir="$(cd "$_F2C_RENDER_DIR/.." && pwd)"
     local platform=$(get_env_value PLATFORM "" "$base_dir/.env")
 
     if [[ -z "$platform" ]]; then
@@ -27,6 +32,8 @@ get_render_bin() {
     fi
 }
 
+# 渲染配置模板
+# 用法: do_render <env 文件（逗号分隔可多个，后者覆盖前者）> <模板目录> <输出目录> [加密键列表]
 do_render() {
     local env_file="$1"
     local template_dir="$2"
@@ -47,31 +54,40 @@ do_render() {
 
     local render_bin
     render_bin=$(get_render_bin) || {
-        log_error "ce-render-cfg 未找到 (PLATFORM=$(get_env_value PLATFORM "" "$(cd "$SCRIPT_DIR/.." && pwd)/.env"), arch=$(uname -m))"
+        log_error "ce-render-cfg 未找到 (PLATFORM=$(get_env_value PLATFORM "" "$(cd "$_F2C_RENDER_DIR/.." && pwd)/.env"), arch=$(uname -m))"
         return 1
     }
 
     log_info "渲染引擎: $(basename "$render_bin")"
+
     # 支持逗号分隔的多个 env 文件，后面的文件覆盖前面的同名变量
-    local env_args=""
+    local -a env_args=()
     local f
+    # 逗号分隔列表按空白展开是有意的（env 文件路径不含空白）
+    # shellcheck disable=SC2086
     for f in ${env_file//,/ }; do
         if [[ ! -f "$f" ]]; then
             log_warn "env 文件不存在，跳过: $f"
             continue
         fi
-        env_args="$env_args -e $f"
+        env_args+=(-e "$f")
     done
-    if [[ -z "$env_args" ]]; then
+    if [[ ${#env_args[@]} -eq 0 ]]; then
         log_error "没有可用的 env 文件"
         return 1
     fi
-    local encrypt_args=""
+
+    local -a encrypt_args=()
+    local key
     for key in $encrypt_keys; do
-        encrypt_args="$encrypt_args --encrypt $key"
+        encrypt_args+=(--encrypt "$key")
     done
-    "$render_bin" -t "$template_dir" -o "$output_dir" \
-        $env_args \
-        $encrypt_args
+
+    # bash 4.2（CentOS 7）在 set -u 下展开空数组会报未绑定变量，需先判长度
+    if [[ ${#encrypt_args[@]} -gt 0 ]]; then
+        "$render_bin" -t "$template_dir" -o "$output_dir" "${env_args[@]}" "${encrypt_args[@]}"
+    else
+        "$render_bin" -t "$template_dir" -o "$output_dir" "${env_args[@]}"
+    fi
     log_success "配置渲染完成"
 }

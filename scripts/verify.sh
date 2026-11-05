@@ -17,6 +17,18 @@ step() {
     echo "==> $1"
 }
 
+# 待检查的 shell 文件清单：*.sh + 无扩展名的入口脚本（f2cctl、init.d 服务脚本）。
+# 后者按 shebang 判定，避免把同目录的 ce-render-cfg-* 二进制扫进来。
+list_shell_files() {
+    find "$BASE_DIR" -name "*.sh" -not -path "*/.git/*" -not -path "*/node_modules/*" -not -path "*/dist/*"
+
+    local f
+    for f in "$BASE_DIR"/opt/fit2cloud/bin/fit2cloud/standalone/*; do
+        [[ -f "$f" ]] || continue
+        [[ "$(head -c 2 "$f" 2>/dev/null)" == '#!' ]] && echo "$f"
+    done
+}
+
 # -----------------------------------------------------------------------------
 # 1. bash -n：所有 shell 脚本语法检查
 # -----------------------------------------------------------------------------
@@ -26,7 +38,7 @@ while IFS= read -r f; do
         echo "FAIL: $f"
         FAIL=1
     fi
-done < <(find "$BASE_DIR" -name "*.sh" -not -path "*/.git/*" -not -path "*/node_modules/*" -not -path "*/dist/*")
+done < <(list_shell_files)
 echo "bash -n 完成"
 
 # -----------------------------------------------------------------------------
@@ -38,15 +50,14 @@ if command -v shellcheck >/dev/null 2>&1; then
     #   SC1090/SC1091 source 路径为运行期变量，无法静态解析
     #   SC2155 项目约定 local x=$(get_env_value ...) 自带默认值、有意容错（112 处，改写风险大于收益）
     #   SC2012  ls|wc -l 仅用于计数，文件名不受控场景不存在
-    #   SC2086  $profile_args/$env_args/$mw_list 等标志与列表字符串有意按空白展开（已人工逐一审阅）
+    #   SC2086  compose 参数串/$mw_list 等标志与列表字符串有意按空白展开（已人工逐一审阅；
+    #           compose 的 --env-file/--profile/-f 统一由 service.sh 拼在子命令之前）
     #   SC2129/SC2181 纯风格类（多行重定向、$? 判空），不强制
     while IFS= read -r f; do
         if ! shellcheck -e SC1090,SC1091,SC2155,SC2012,SC2086,SC2129,SC2181 "$f" 2>&1; then
             FAIL=1
         fi
-    done < <(find "$BASE_DIR/opt/fit2cloud/scripts" "$BASE_DIR/scripts" \
-                 "$BASE_DIR/opt/fit2cloud/bin" "$BASE_DIR/opt/fit2cloud/tools" \
-                 -name "*.sh" -not -path "*/.git/*" 2>/dev/null)
+    done < <(list_shell_files)
     echo "shellcheck 完成"
 else
     echo "shellcheck 未安装，跳过 (建议: brew install shellcheck / apt install shellcheck)"

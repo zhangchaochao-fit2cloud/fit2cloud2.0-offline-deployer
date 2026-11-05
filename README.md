@@ -215,24 +215,40 @@ bash install.sh --force-reinstall
 ```bash
 # 服务管理
 f2cctl start [SERVICE]          # 启动服务
-f2cctl stop [SERVICE]           # 停止服务
+f2cctl stop [SERVICE]           # 停止服务（不带服务名 = compose down）
 f2cctl restart [SERVICE]        # 重启服务
 f2cctl status                   # 查看状态
 f2cctl logs [SERVICE] [LINES]   # 查看日志
+f2cctl health                   # 逐容器健康检查（异常返回非 0，可用于巡检）
+f2cctl version                  # 已安装版本
+f2cctl disk                     # 系统/Docker/安装目录磁盘占用
 
 # 备份还原
-f2cctl backup                   # 全量备份（配置+数据+镜像）
-f2cctl restore <FILE>           # 从备份还原
+f2cctl backup                   # 全量备份（配置+数据+扩展+日志+.env/install.env/runtime.env+镜像）
+f2cctl restore <FILE>           # 从备份还原（含 env 与 compose 编排）
 f2cctl backup-image [PATTERN]   # 仅备份 Docker 镜像
 
 # 升级扩展
 f2cctl upgrade <FILE>           # 升级
-f2cctl install-module <FILE>    # 安装扩展模块
+f2cctl install-module <FILE>    # 安装扩展模块（已安装则自动按升级处理）
 f2cctl import <FILE>            # 导入产品包
 
 # 系统管理
-f2cctl repo <ADDRESS>           # 配置 Docker 不安全仓库
-f2cctl clean [image|log|all]    # 清理镜像/日志
+f2cctl repo <ADDRESS>           # 配置 Docker 不安全仓库（密码走 --password-stdin）
+f2cctl clean [image|log|all]    # 清理镜像/日志（交互确认，非 TTY 环境直接报错不挂住）
+```
+
+开机自启由 systemd 管理（`systemctl start|stop|restart fit2cloud`）。
+`fit2cloud.service`（安装为 `/etc/init.d/fit2cloud`）额外提供 compose 原生命令不具备的能力，
+与 f2cctl 共用同一套库，可按需直接调用：
+
+```bash
+/etc/init.d/fit2cloud start [SERVICE] [-w 监测分钟=30]
+/etc/init.d/fit2cloud stop [SERVICE] [-t 停止超时秒=120]
+/etc/init.d/fit2cloud recreate [SERVICE]                        # 按最新 compose 重建
+/etc/init.d/fit2cloud upgrade increment                         # 只重启镜像有变化的服务（需 jq）
+/etc/init.d/fit2cloud upgrade full | local [镜像目录] | SERVICE
+/etc/init.d/fit2cloud health | version | disk | backup | clean
 ```
 
 ## 模板渲染 (ce-render-cfg)

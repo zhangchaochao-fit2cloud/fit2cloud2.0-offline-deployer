@@ -64,6 +64,9 @@ EOF
 }
 
 parse_args() {
+    # PACKAGE_URL_PREFIX 等为跨文件全局变量，由 scripts/package/create-package.sh 消费
+    # （shellcheck 不支持在 case 分支前写指令，统一放在循环前）
+    # shellcheck disable=SC2034
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help)       show_help; exit 0 ;;
@@ -81,7 +84,6 @@ parse_args() {
             --env-file)      ENV_FILE="$2"; shift 2 ;;
             --skip-render-cfg) SKIP_RENDER_CFG=true; shift ;;
             --compress)      PACKAGE_COMPRESS="$2"; shift 2 ;;
-            # shellcheck disable=SC2034  # 跨文件：create-package.sh 消费
             --package-url-prefix) PACKAGE_URL_PREFIX="$2"; shift 2 ;;
             *)               log_error "未知参数: $1"; show_help; exit 1 ;;
         esac

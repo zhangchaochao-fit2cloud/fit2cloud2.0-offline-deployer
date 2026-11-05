@@ -9,13 +9,18 @@
 
 | 层 | 位置 | 规则 |
 |---|---|---|
-| 入口脚本 | `package.sh`、`opt/install.sh`、`opt/fit2cloud/scripts/install.sh`、`standalone/*.sh` | 必须 `set -euo pipefail`；shebang `#!/bin/bash` |
+| 入口脚本 | `package.sh`、`opt/install.sh`、`opt/fit2cloud/scripts/install.sh`、`standalone/*`（含无扩展名的 `f2cctl`、`fit2cloud.service`） | 必须 `set -euo pipefail`；shebang `#!/bin/bash` |
 | 打包子脚本 | `scripts/package/*.sh` | `set -euo pipefail`；只定义函数，由 package.sh source 后调用 |
-| 库文件 | `opt/fit2cloud/scripts/*.sh`、`middleware/*.sh` | 不加 set（由入口提供）；文件头带"库文件"注释；**必须带 source 守卫**（见 §2） |
+| 库文件 | `opt/fit2cloud/scripts/*.sh`（含 `extension.sh`）、`middleware/*.sh` | 不加 set（由入口提供）；文件头带"库文件"注释；**必须带 source 守卫**（见 §2） |
 
 - 目录职责：打包流水线 `scripts/package/`（prepare → pull-images → export-images → download-tools → create-package）；
   安装/运行期库 `opt/fit2cloud/scripts/`；两者共用 `common.sh`（日志/env 工具/下载）。
 - 库文件不做入口参数解析；入口不写业务细节。
+- **同一能力只实现一次**：`service.sh` = compose 编排 + 状态/健康/磁盘/镜像备份/清理，
+  `extension.sh` = 扩展模块安装与升级。`f2cctl`、`fit2cloud.service`、
+  `fit2cloud-{install,upgrade}-extension.sh` 都只是薄入口，禁止再各自复制这些逻辑。
+- 安装目录布局是契约：`install.sh` 的 `copy_files` 必须复制 `scripts/`（装机后的
+  `f2cctl`、`/etc/init.d/fit2cloud`、扩展脚本全部按 `<安装目录>/scripts/*.sh` 加载库）。
 
 ## 2. source 守卫（include-once）
 
@@ -49,6 +54,18 @@ readonly 常量二次声明会直接报错终止。守卫变量命名：`_F2C_<�
   - 需要感知失败：先声明后赋值（`local x; x=$(cmd)`），失败交给 set -e
 - 长耗时/可挂死的外部命令必须 `timeout` 兜底（如 `DOCKER_SAVE_TIMEOUT`）。
 - 原子写：先写 `<file>.part`，成功后 `mv` 改名；命中类校验必须同时校验配套 sidecar（如 `.md5`）。
+- 回滚按已完成步骤**逆序**执行（`upgrade.sh` 用数组记录步骤，倒序遍历），否则会出现
+  "先用新编排启服务、再恢复旧编排"这类无效回滚。
+- 临时目录用 `mktemp -d`，执行体放子 shell（`( ... ) || rc=$?`），父进程统一清理并透传退出码。
+
+### compose 调用约定（`service.sh`）
+
+- `--env-file` / `--profile` / `-f` 都是 **compose 全局参数，必须拼在子命令之前**：
+  `docker compose ps|logs|stop` 不接受子命令形式的 `--profile`，写在后面直接 `unknown flag`。
+  统一由 `get_compose_files` 拼装，子命令侧不要再追加。
+- 执行入口统一用 `_compose_run <安装目录> <env> <子命令> [参数...]`（内部子 shell cd，不污染调用方 cwd）。
+- bash 4.2（CentOS 7）在 `set -u` 下展开空数组 `"${arr[@]}"` 会报未绑定变量：
+  展开前判 `${#arr[@]}`，或用 `${arr[*]:-}`。
 
 ## 5. shellcheck 豁免清单（集中在 scripts/verify.sh，新增必须写理由）
 
@@ -84,8 +101,14 @@ IMAGE_ADDRESS=$(get_env_value IMAGE_ADDRESS "registry.fit2cloud.com/north" "$INS
 ## 7. 可移植性
 
 - 部署目标为 Linux（CentOS 7+），但开发机可能是 macOS：禁用 GNU 专属选项
-  （`sed -i` 后缀差异 → `set_env_value` 用 awk 重写；`stat`/`date -d` 差异敏感处避免使用）。
-- bash 4.2 基线：不用关联数组（如需按名分组计数用 awk）。
+  - 就地改文件统一用 `common.sh` 的 `replace_in_file <file> <sed 脚本>`（mktemp + mv），
+    替换值经 `escape_sed_replacement` 转义；**禁止 `sed -i`**（GNU/BSD 后缀语义不同），
+    也禁止 `set_env_value` 之外的裸 `sed -i` 写法
+  - `xargs -r`（BSD 无）→ 用 `while read` 循环；`stat`/`date -d` 差异敏感处避免使用
+  - `${var^^}` 大写化需 bash 4+（开发机 bash 3.2 直接 bad substitution）→ `tr '[:lower:]' '[:upper:]'`
+- bash 4.2 基线：不用关联数组（如需按名分组计数用 awk）、不用 nameref（4.3+）。
+- 外部交互命令：需要凭据的走 stdin（`docker login --password-stdin`），需要确认的先判 `[[ -t 0 ]]`，
+  避免在无 TTY 环境（Jenkins/系统服务）里挂住。
 - 下载统一走 `download_file`（curl 优先、wget 兜底、重试 + 断点续传），**禁止各处直接调 wget/curl**；
   CI（无 TTY）自动静默，TTY 才显示进度。
 
@@ -114,4 +137,13 @@ cp a b || true
 
 # ✗ 无超时的可挂死命令
 docker save "${images[@]}"
+
+# ✗ compose 全局参数写到子命令之后（ps/logs/stop 直接 unknown flag）
+$compose_exe $compose_args ps --profile vm
+
+# ✗ 就地改文件用 sed -i（GNU/BSD 不兼容）
+sed -i "s#a#b#" "$f"
+
+# ✗ 需要输入/确认的命令不判 TTY（Jenkins、systemd 下直接挂死）
+read -rp "密码: " pwd
 ```

@@ -1,6 +1,11 @@
 #!/bin/bash
 # chkconfig: 2345 10 90
-# description: fit2cloud service
+# description: Fit2Cloud service
+# Fit2Cloud 服务控制脚本：安装为 /etc/init.d/fit2cloud，同时被 systemd unit 以
+# ExecStart/ExecStop/ExecReload 调用（start / stop / restart）
+# compose 编排、健康检查、镜像备份等能力统一复用 scripts/ 下的库，不在本脚本重复实现
+
+set -euo pipefail
 
 export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 
@@ -11,386 +16,295 @@ LIB_DIR="$FIT2CLOUD_DIR/scripts"
 source "$LIB_DIR/common.sh"
 source "$LIB_DIR/docker.sh"
 source "$LIB_DIR/service.sh"
+source "$LIB_DIR/os.sh"
 
 ENV_FILE="$FIT2CLOUD_DIR/.env"
-WORK_DIR=$(get_env_value CE_INSTALL_PATH "/opt" "$ENV_FILE")
-WORK_DIR="$WORK_DIR/fit2cloud"
+WORK_DIR="$(get_env_value CE_INSTALL_PATH "/opt" "$ENV_FILE")/fit2cloud"
 LOG_DIR="$WORK_DIR/logs"
 
-action="${1:-}"
-target="${2:-}"
-mode="${3:-}"
-
+# 服务启动后的监测分钟数 / 停止超时秒数
 WAIT_TIME=30
+STOP_TIMEOUT=120
 
-options=$(getopt -o w: -l wait-time: -- "$@" 2>/dev/null)
-eval set -- "$options" 2>/dev/null || true
+show_usage() {
+    cat << 'EOF'
 
-while true; do
+用法: fit2cloud <命令> [参数] [-w 分钟] [-t 秒]
+
+服务管理:
+  start [SERVICE]     启动服务
+  stop [SERVICE]      停止服务
+  restart [SERVICE]   重启服务
+  recreate [SERVICE]  重新创建服务（按最新 compose 重建）
+  status [SERVICE]    查看服务状态
+  logs [SERVICE]      跟踪查看日志
+
+维护:
+  upgrade [increment|full|local [镜像路径]|SERVICE]   更新服务
+  backup [FILTER]     备份服务镜像
+  clean [image|log]   清理镜像/日志
+  health              健康检查
+  version             查看版本信息
+  disk                磁盘使用情况
+
+选项:
+  -w, --wait-time MIN   启动后监测时长（分钟，默认 30）
+  -t, --timeout SEC     停止超时（秒，默认 120）
+EOF
+}
+
+# 手工解析：不用 getopt（外部 getopt 对未知选项整体失败会吞掉业务参数）
+action=""
+target=""
+arg3=""
+positionals=()
+while [[ $# -gt 0 ]]; do
     case "$1" in
-        -w|--wait-time) WAIT_TIME="$2"; shift 2 ;;
-        --)             shift; break ;;
-        *)              break ;;
+        -w|--wait-time)
+            [[ $# -ge 2 ]] || die "缺少取值: $1"
+            WAIT_TIME="$2"; shift 2 ;;
+        --wait-time=*)
+            WAIT_TIME="${1#*=}"; shift ;;
+        -t|--timeout)
+            [[ $# -ge 2 ]] || die "缺少取值: $1"
+            STOP_TIMEOUT="$2"; shift 2 ;;
+        --timeout=*)
+            STOP_TIMEOUT="${1#*=}"; shift ;;
+        -h|--help)
+            show_usage; exit 0 ;;
+        --)
+            shift ;;
+        *)
+            positionals+=("$1"); shift ;;
     esac
 done
 
-get_exe() {
-    local compose_args
-    compose_args=$(get_compose_files "$WORK_DIR" "$ENV_FILE")
-    local compose_exe
-    compose_exe=$(get_docker_compose_exe "$ENV_FILE")
-    echo "$compose_exe $compose_args"
+action="${positionals[0]:-}"
+target="${positionals[1]:-}"
+arg3="${positionals[2]:-}"
+
+# -----------------------------------------------------------------------------
+# 生命周期
+# -----------------------------------------------------------------------------
+
+_start_named() {
+    local name="$1"
+    service_up "$WORK_DIR" "$ENV_FILE" "$name"
 }
 
-waiting_and_check() {
-    local time=${1:-$WAIT_TIME}
-    for (( i = 0; i < time * 2; i++ )); do
-        local exe=$(get_exe)
-
-        local start_num=$($exe ps 2>/dev/null | grep -c 'starting' || true)
-        local exited_num=$($exe ps 2>/dev/null | grep -c 'Exit' || true)
-        local unhealthy_num=$($exe ps 2>/dev/null | grep -c 'unhealthy' || true)
-
-        local exited_containers=($($exe ps 2>/dev/null | grep 'Exit' | awk '{print $1}'))
-        for container in "${exited_containers[@]}"; do
-            log_warn "容器退出，尝试重启: $container"
-            $exe up -d "$container"
-        done
-
-        if [[ "$start_num" -ne 0 || "$unhealthy_num" -ne 0 || "$exited_num" -ne 0 ]]; then
-            echo "${time}分钟内将持续监测服务状态，若有异常将自动重启，Ctrl+C 退出监测"
-            $exe ps
-            sleep 30
-        else
-            $exe ps
-            break
-        fi
-    done
-}
-
-check_memory() {
-    local mem_total_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo "0")
-    if [[ "$mem_total_kb" -lt 16267060 ]]; then
-        log_warn "内存小于16G，建议 Fit2Cloud 所在机器内存 >= 16G"
-    fi
+_stop_named() {
+    local name="$1"
+    service_stop "$WORK_DIR" "$ENV_FILE" "$name"
+    _compose_run "$WORK_DIR" "$ENV_FILE" rm -f "$name" || true
 }
 
 start_service() {
-    check_memory
-    local exe=$(get_exe)
+    check_memory 16384
 
     if [[ -n "$target" ]]; then
-        $exe up -d --no-recreate "$target"
+        _start_named "$target"
     else
-        $exe up -d --no-recreate
+        service_up "$WORK_DIR" "$ENV_FILE" --no-recreate
     fi
 
-    waiting_and_check
+    service_wait_ready "$WORK_DIR" "$ENV_FILE" "$WAIT_TIME"
 }
 
 stop_service() {
-    local exe=$(get_exe)
+    local name="${1:-$target}"
 
-    if [[ -n "$target" ]]; then
-        $exe stop "$target" && $exe rm -f "$target"
+    if [[ -n "$name" ]]; then
+        _stop_named "$name"
     else
-        $exe down -t 120
-    fi
-}
-
-restart_service() {
-    if [[ -n "$target" ]]; then
-        stop_service
-        start_service
-    else
-        stop_service
-        start_service
-        waiting_and_check
+        _compose_run "$WORK_DIR" "$ENV_FILE" down -t "$STOP_TIMEOUT"
     fi
 }
 
 recreate_service() {
-    check_memory
-    local exe=$(get_exe)
+    check_memory 16384
 
-    if [[ -n "$target" ]]; then
-        $exe up -d "$target"
-    else
-        $exe up -d
+    # 显式传参 = 仅重建这些服务；否则回落到 target，再否则全部
+    local -a names=("$@")
+    if [[ ${#names[@]} -eq 0 && -n "$target" ]]; then
+        names=("$target")
     fi
 
-    waiting_and_check
+    if [[ ${#names[@]} -gt 0 ]]; then
+        service_up "$WORK_DIR" "$ENV_FILE" "${names[@]}"
+    else
+        service_up "$WORK_DIR" "$ENV_FILE"
+    fi
+
+    service_wait_ready "$WORK_DIR" "$ENV_FILE" "$WAIT_TIME"
+}
+
+restart_service() {
+    if [[ -n "$target" ]]; then
+        stop_service "$target"
+        _start_named "$target"
+    else
+        stop_service
+        service_up "$WORK_DIR" "$ENV_FILE" --no-recreate
+    fi
+
+    service_wait_ready "$WORK_DIR" "$ENV_FILE" "$WAIT_TIME"
 }
 
 status_service() {
-    local exe=$(get_exe)
     if [[ -n "$target" ]]; then
-        $exe ps "$target"
+        _compose_run "$WORK_DIR" "$ENV_FILE" ps "$target"
     else
-        $exe ps
+        service_status "$WORK_DIR" "$ENV_FILE"
     fi
 }
 
 logs_service() {
-    local exe=$(get_exe)
-    $exe logs -f "${@:2}"
+    if [[ -n "$target" ]]; then
+        _compose_run "$WORK_DIR" "$ENV_FILE" logs -f "$target"
+    else
+        _compose_run "$WORK_DIR" "$ENV_FILE" logs -f
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# 更新
+# -----------------------------------------------------------------------------
+
+# 镜像有变化的服务（增量更新用）：对比运行中容器的镜像 ID 与 pull 后的镜像 ID
+_changed_services() {
+    local modules
+    modules=$(_compose_run "$WORK_DIR" "$ENV_FILE" config --format json 2>/dev/null \
+        | jq -r '.services | to_entries[] | "\(.key) \(.value.container_name // "") \(.value.image // "")"')
+
+    local service_name container image current_hash new_hash
+    while IFS=' ' read -r service_name container image; do
+        [[ -z "$service_name" ]] && continue
+        current_hash=""
+        if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
+            current_hash=$(docker inspect "$container" --format '{{.Image}}' 2>/dev/null || true)
+        fi
+        new_hash=$(docker images "$image" --no-trunc --format '{{.ID}}' 2>/dev/null || true)
+
+        if [[ -n "$new_hash" && "$current_hash" != "$new_hash" ]]; then
+            echo "$service_name"
+        fi
+    done <<< "$modules"
+}
+
+_upgrade_increment() {
+    cmd_exists jq || die "增量更新需要 jq，请先安装"
+
+    _compose_run "$WORK_DIR" "$ENV_FILE" pull
+
+    local -a changed=()
+    local svc
+    while IFS= read -r svc; do
+        [[ -n "$svc" ]] && changed+=("$svc")
+    done < <(_changed_services)
+
+    if [[ ${#changed[@]} -eq 0 ]]; then
+        log_info "所有服务已是最新版本"
+        service_wait_ready "$WORK_DIR" "$ENV_FILE" "$WAIT_TIME"
+        return 0
+    fi
+
+    log_info "需要更新的服务: ${changed[*]}"
+    for svc in "${changed[@]}"; do
+        stop_service "$svc"
+    done
+    recreate_service "${changed[@]}"
+}
+
+_upgrade_local() {
+    local image_dir="${1:-$WORK_DIR/docker-images}"
+    [[ -d "$image_dir" ]] || die "无效的镜像路径: $image_dir"
+
+    log_info "加载本地镜像..."
+    local image_file
+    for image_file in "$image_dir"/*; do
+        [[ -f "$image_file" ]] || continue
+        log_info_inline "$(basename "$image_file")"
+        docker load -qi "$image_file"
+        log_ok
+    done
+
+    stop_service
+    recreate_service
 }
 
 upgrade_service() {
-    local exe=$(get_exe)
-
-    if [[ "$target" == "increment" ]]; then
-        if ! cmd_exists jq; then
-            log_error "增量更新需要 jq，请先安装"
-            exit 1
-        fi
-
-        $exe pull
-
-        local modules=$($exe config --format json 2>/dev/null | jq -r '.services | to_entries[] | "\(.key) \(.value.container_name) \(.value.image)"')
-        local restart_services=()
-
-        while IFS= read -r module; do
-            local service_name=$(echo "$module" | awk '{print $1}')
-            local container=$(echo "$module" | awk '{print $2}')
-            local image=$(echo "$module" | awk '{print $3}')
-
-            local current_hash=""
-            if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
-                current_hash=$(docker inspect "$container" --format '{{.Image}}' 2>/dev/null || true)
-            fi
-
-            local new_hash=$(docker images "$image" --no-trunc --format '{{.ID}}' 2>/dev/null || true)
-
-            if [[ "$current_hash" != "$new_hash" && -n "$new_hash" ]]; then
-                restart_services+=("$service_name")
-            fi
-        done < <(echo "$modules")
-
-        if [[ ${#restart_services[@]} -gt 0 ]]; then
-            log_info "需要更新的服务: ${restart_services[*]}"
-            for svc in "${restart_services[@]}"; do
-                stop_service "$svc"
-            done
-            recreate_service "${restart_services[@]}"
-        else
-            log_info "所有服务已是最新版本"
-        fi
-
-        waiting_and_check
-        return
-    fi
-
-    if [[ "$target" == "full" ]]; then
-        $exe pull
-        stop_service
-        recreate_service
-        waiting_and_check
-        return
-    fi
-
-    if [[ "$target" == "local" ]]; then
-        local image_dir="${3:-$WORK_DIR/docker-images}"
-        if [[ ! -d "$image_dir" ]]; then
-            log_error "无效的镜像路径: $image_dir"
-            exit 1
-        fi
-
-        log_info "加载本地镜像..."
-        for image_file in "$image_dir"/*; do
-            [[ ! -f "$image_file" ]] && continue
-            log_info_inline "$(basename "$image_file")"
-            docker load -qi "$image_file"
-            log_ok
-        done
-
-        stop_service
-        recreate_service
-        waiting_and_check
-        return
-    fi
-
-    if [[ -n "$target" ]]; then
-        $exe pull "$target"
-        stop_service
-        recreate_service "$target"
-        return
-    fi
-
-    $exe pull
-    stop_service
-    recreate_service
-    waiting_and_check
-}
-
-backup_service() {
-    local exe=$(get_exe)
-    local backup_dir="$WORK_DIR/backup/$(date "+%Y-%m-%d")"
-    ensure_dir "$backup_dir"
-
-    local image_names
-    if [[ -n "$target" ]]; then
-        image_names=$($exe config 2>/dev/null | grep "image:" | awk '{print $2}' | grep "$target")
-    else
-        image_names=$($exe config 2>/dev/null | grep "image:" | awk '{print $2}')
-    fi
-
-    log_info "备份镜像..."
-    for image_name in $image_names; do
-        local name=$(echo "$image_name" | awk -F':' '{print $1}' | awk -F'/' '{print $3}')
-        log_info_inline "$name"
-        docker save -o "$backup_dir/${name}.tar" "$image_name"
-        log_ok
-    done
-}
-
-clean_service() {
     case "$target" in
-        image)
-            read -rp "删除所有未使用的镜像? (yes/no): " choice
-            case "$choice" in
-                yes) docker image prune -f; log_success "镜像已清理" ;;
-                *) log_info "操作已取消" ;;
-            esac
+        increment)
+            _upgrade_increment
             ;;
-        log)
-            echo "1) 删除所有日志"
-            echo "2) 保留最近7天日志"
-            read -rp "请选择 (1/2): " choice
-            case "$choice" in
-                1)
-                    find "$LOG_DIR" -maxdepth 2 -type d -name "history" -exec rm -rf {} + 2>/dev/null || true
-                    log_success "日志已清理"
-                    ;;
-                2)
-                    find "$LOG_DIR" -maxdepth 2 -type d -name "history" 2>/dev/null | while read -r dir; do
-                        find "$dir" -type f -name "*.log" -mtime +7 -delete 2>/dev/null || true
-                    done
-                    log_success "7天前日志已清理"
-                    ;;
-                *) log_info "操作已取消" ;;
-            esac
+        full|"")
+            _compose_run "$WORK_DIR" "$ENV_FILE" pull
+            stop_service
+            recreate_service
+            ;;
+        local)
+            _upgrade_local "$arg3"
             ;;
         *)
-            clean_service image
-            clean_service log
+            _compose_run "$WORK_DIR" "$ENV_FILE" pull "$target"
+            stop_service "$target"
+            recreate_service "$target"
             ;;
     esac
 }
 
-version_service() {
-    local version_file="$WORK_DIR/conf/version"
-    if [[ -f "$version_file" ]]; then
-        cat "$version_file"
-    else
-        echo "版本信息未知"
-    fi
-}
+# -----------------------------------------------------------------------------
+# 维护与信息（实现见 scripts/service.sh，f2cctl 共用）
+# -----------------------------------------------------------------------------
 
-health_service() {
-    local exe=$(get_exe)
-    local all_healthy=true
-
-    echo "=== 服务健康检查 ==="
-    echo ""
-
-    local services=$($exe ps --format '{{.Name}} {{.Status}}' 2>/dev/null)
-    if [[ -z "$services" ]]; then
-        log_error "没有运行中的服务"
-        return 1
-    fi
-
-    while IFS= read -r line; do
-        local name=$(echo "$line" | awk '{print $1}')
-        local status=$(echo "$line" | awk '{$1=""; print $0}' | xargs)
-
-        if echo "$status" | grep -q "Up"; then
-            if echo "$status" | grep -q "healthy"; then
-                echo -e "  ${GREEN}✓${NC} $name: 运行中 (健康)"
-            elif echo "$status" | grep -q "unhealthy"; then
-                echo -e "  ${RED}✗${NC} $name: 运行中 (不健康)"
-                all_healthy=false
-            else
-                echo -e "  ${YELLOW}○${NC} $name: 运行中"
+do_clean() {
+    case "$target" in
+        image)
+            if [[ -t 0 ]]; then
+                local answer
+                read -rp "删除所有未使用的镜像? [y/N]: " answer
+                [[ "$answer" == "y" || "$answer" == "yes" ]] || { log_info "操作已取消"; return 0; }
             fi
-        else
-            echo -e "  ${RED}✗${NC} $name: 已停止"
-            all_healthy=false
-        fi
-    done <<< "$services"
-
-    echo ""
-
-    if [[ "$all_healthy" == "true" ]]; then
-        log_success "所有服务健康"
-        return 0
-    else
-        log_warn "部分服务异常"
-        return 1
-    fi
+            service_clean_images
+            ;;
+        log)
+            local choice
+            [[ -t 0 ]] || die "非交互环境无法选择日志清理方式"
+            echo "1) 删除所有日志"
+            echo "2) 保留最近7天日志"
+            read -rp "请选择 (1/2): " choice
+            case "$choice" in
+                1) service_clean_logs "$LOG_DIR" 0 ;;
+                2) service_clean_logs "$LOG_DIR" 7 ;;
+                *) log_info "操作已取消" ;;
+            esac
+            ;;
+        *)
+            do_clean image
+            do_clean log
+            ;;
+    esac
 }
 
-disk_service() {
-    echo "=== 磁盘使用情况 ==="
-    echo ""
-
-    echo "系统磁盘:"
-    df -h / | tail -1 | awk '{printf "  总空间: %s  已用: %s  可用: %s  使用率: %s\n", $2, $3, $4, $5}'
-
-    echo ""
-    echo "Docker 磁盘:"
-    local docker_root=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
-    if [[ -d "$docker_root" ]]; then
-        df -h "$docker_root" 2>/dev/null | tail -1 | awk '{printf "  总空间: %s  已用: %s  可用: %s  使用率: %s\n", $2, $3, $4, $5}'
-    fi
-
-    echo ""
-    echo "Fit2Cloud 目录:"
-    if [[ -d "$WORK_DIR" ]]; then
-        du -sh "$WORK_DIR" 2>/dev/null | awk '{printf "  总大小: %s\n", $1}'
-        du -sh "$WORK_DIR/data" 2>/dev/null | awk '{printf "  数据目录: %s\n", $1}'
-        du -sh "$WORK_DIR/logs" 2>/dev/null | awk '{printf "  日志目录: %s\n", $1}'
-        du -sh "$WORK_DIR/docker-images" 2>/dev/null | awk '{printf "  镜像目录: %s\n", $1}'
-    fi
+main() {
+    case "$action" in
+        start)     start_service ;;
+        stop)      stop_service ;;
+        restart)   restart_service ;;
+        recreate)  recreate_service ;;
+        status)    status_service ;;
+        logs)      logs_service ;;
+        upgrade)   upgrade_service ;;
+        backup)    service_backup_images "$WORK_DIR" "$ENV_FILE" "$WORK_DIR/backup/$(date "+%Y-%m-%d")" "$target" ;;
+        clean)     do_clean ;;
+        version)   service_version "$WORK_DIR" ;;
+        health)    service_health "$WORK_DIR" "$ENV_FILE" ;;
+        disk)      service_disk "$WORK_DIR" ;;
+        *)
+            show_usage
+            [[ -z "$action" ]] || exit 1
+            ;;
+    esac
 }
 
-case "$action" in
-    start)     start_service ;;
-    stop)      stop_service ;;
-    restart)   restart_service ;;
-    recreate)  recreate_service ;;
-    status)    status_service ;;
-    upgrade)   upgrade_service ;;
-    backup)    backup_service ;;
-    logs)      logs_service ;;
-    clean)     clean_service ;;
-    version)   version_service ;;
-    health)    health_service ;;
-    disk)      disk_service ;;
-    *)
-        echo "
-用法: $0 <命令> [参数]
-
-服务管理:
-  start         启动服务
-  stop          停止服务
-  restart       重启服务
-  recreate      重新创建服务
-  status        查看服务状态
-
-维护:
-  upgrade       更新服务 (increment|full|local [镜像路径])
-  backup        备份服务镜像
-  logs          查看日志
-  clean         清理 (image|log)
-
-信息:
-  version       查看版本信息
-  health        健康检查
-  disk          磁盘使用情况
-
-选项:
-  -w, --wait-time SECS   服务启动监测等待时间 (默认: 30)
-"
-        ;;
-esac
+main
